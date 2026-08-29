@@ -195,6 +195,71 @@ function setLanguage(lang) {
   applyTranslations();
 }
 
+function renderSubscriptionCard() {
+  const sub = state.subscription;
+  const container = document.getElementById('subscription-card');
+  if (!container) return;
+
+  if (!sub) {
+    container.innerHTML = '<p>Загрузка...</p>';
+    return;
+  }
+
+  if (sub.is_pro) {
+    const expires = sub.expires_at ? new Date(sub.expires_at).toLocaleDateString('ru-RU') : '∞';
+    container.innerHTML = `
+      <div class="sub-card sub-pro">
+        <div class="sub-header">💎 Pro активна</div>
+        <p>Действует до: <strong>${expires}</strong></p>
+        <p>Ошибок: <strong>без ограничений</strong></p>
+      </div>
+    `;
+  } else {
+    const remaining = sub.errors_remaining ?? '∞';
+    const errorCount = sub.error_count || 0;
+    const limit = sub.error_limit || 10;
+    const pct = Math.min(100, Math.round((errorCount / limit) * 100));
+    const warnClass = pct >= 80 ? 'sub-warn' : '';
+
+    container.innerHTML = `
+      <div class="sub-card sub-free ${warnClass}">
+        <div class="sub-header">📋 Бесплатный план</div>
+        <p>Ошибок: <strong>${errorCount}/${limit}</strong> (${remaining} осталось)</p>
+        <div class="sub-progress-bar">
+          <div class="sub-progress-fill" style="width: ${pct}%; background: ${pct >= 80 ? 'var(--red)' : 'var(--primary)'};"></div>
+        </div>
+        <button class="btn btn-primary" style="margin-top:12px;width:100%;" onclick="buyProWithStars()">
+          ⭐ Купить Pro — 150 Stars / мес
+        </button>
+        <p class="sub-note">Без ограничений: тесты, ошибки, экзамен</p>
+      </div>
+    `;
+  }
+}
+
+async function buyProWithStars() {
+  // Telegram Stars payment
+  if (window.Telegram && window.Telegram.WebApp) {
+    const tg = window.Telegram.WebApp;
+    if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
+      try {
+        const res = await apiPost('/api/subscription/activate', {});
+        if (res.ok) {
+          state.subscription = { ...state.subscription, plan: 'pro', is_pro: true };
+          renderSubscriptionCard();
+          tg.showAlert('Pro подписка активирована! 🎉');
+        } else {
+          tg.showAlert('Ошибка активации. Попробуйте позже.');
+        }
+      } catch(e) {
+        tg.showAlert('Ошибка сети. Попробуйте позже.');
+      }
+      return;
+    }
+  }
+  alert('Откройте приложение через Telegram для оплаты.');
+}
+
 function applyTranslations() {
   document.querySelectorAll('[data-i18n]').forEach(el => {
     const key = el.getAttribute('data-i18n');
@@ -243,6 +308,7 @@ let state = {
   },
   categoryStats: {},  // { categoryId: { total: n, correct: n } }
   errors: [],         // Array of question IDs answered incorrectly
+  subscription: null,  // { plan, is_pro, error_limit, error_count, errors_remaining }
   settings: {
     darkMode: false,
     sounds: true,
@@ -377,6 +443,9 @@ async function fetchUserProfile() {
     }
     if (data.errors) {
       state.errors = data.errors;
+    }
+    if (data.subscription) {
+      state.subscription = data.subscription;
     }
     // Show admin tab if user is admin
     if (state.user.isAdmin) {
@@ -608,6 +677,9 @@ function updateProfile() {
   document.getElementById('sounds-toggle').checked = state.settings.sounds;
   document.getElementById('lang-select').value = currentLang;
 
+  // Subscription card
+  renderSubscriptionCard();
+
   applyTheme();
   applyTranslations();
 }
@@ -802,6 +874,31 @@ function checkAnswer() {
 
   const isCorrect = JSON.stringify(selected) === JSON.stringify(correct);
 
+  // Check error limit for free plan
+  if (!isCorrect && !state.subscription?.is_pro) {
+    const errorLimit = state.subscription?.error_limit || 10;
+    const errorCount = state.subscription?.error_count || state.errors.length;
+    if (errorCount >= errorLimit && !state.errors.includes(q.id)) {
+      // Show limit reached message
+      const quizArea = document.getElementById('quiz-area');
+      if (quizArea) {
+        const limitDiv = document.createElement('div');
+        limitDiv.className = 'error-limit-message';
+        limitDiv.innerHTML = `
+          <div style="text-align:center;padding:24px;">
+            <div style="font-size:48px;margin-bottom:16px;">🚫</div>
+            <h3 style="margin-bottom:8px;">Лимит ошибок</h3>
+            <p style="color:var(--tg-theme-hint-color);margin-bottom:16px;">Бесплатный план: ${errorLimit} ошибок. Купите Pro для безлимитного доступа!</p>
+            <button class="btn btn-primary" onclick="buyProWithStars()">⭐ Купить Pro</button>
+          </div>
+        `;
+        quizArea.appendChild(limitDiv);
+      }
+      quizState.answered = false; // allow retry
+      return;
+    }
+  }
+
   // Update stats
   state.stats.totalAnswered++;
   state.stats.dailyAnswered++;
@@ -821,6 +918,12 @@ function checkAnswer() {
     // Add to errors (if not already there)
     if (!state.errors.includes(q.id)) {
       state.errors.push(q.id);
+      if (state.subscription) {
+        state.subscription.error_count = (state.subscription.error_count || 0) + 1;
+        if (state.subscription.error_limit) {
+          state.subscription.errors_remaining = Math.max(0, state.subscription.error_limit - state.subscription.error_count);
+        }
+      }
     }
 
     // Deduct life in exam mode

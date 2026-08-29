@@ -793,6 +793,63 @@ textarea.input-field {
   text-align: right;
 }
 
+/* Subscription Card */
+.sub-card {
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid var(--tg-theme-hint-color);
+}
+
+.sub-pro {
+  background: linear-gradient(135deg, rgba(108,74,255,0.15), rgba(248,180,0,0.1));
+  border-color: var(--primary);
+}
+
+.sub-free {
+  background: var(--tg-theme-bg-color);
+}
+
+.sub-warn {
+  border-color: var(--red);
+  background: rgba(244,67,54,0.05);
+}
+
+.sub-header {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.sub-progress-bar {
+  height: 8px;
+  background: rgba(0,0,0,0.1);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.sub-progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.5s ease;
+}
+
+.sub-note {
+  font-size: 12px;
+  color: var(--tg-theme-hint-color);
+  margin-top: 8px;
+  text-align: center;
+}
+
+/* Error limit message */
+.error-limit-message {
+  border: 2px solid var(--red);
+  border-radius: 16px;
+  margin: 16px 0;
+  background: rgba(244,67,54,0.05);
+  animation: fadeIn 0.3s ease;
+}
+
 /* Settings */
 .settings-list {
   display: flex;

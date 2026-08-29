@@ -69,6 +69,7 @@ class User(db.Model):
     stats = db.relationship('UserStats', backref='user', uselist=False, cascade='all, delete-orphan')
     category_stats = db.relationship('UserCategoryStats', backref='user', cascade='all, delete-orphan')
     errors = db.relationship('UserError', backref='user', cascade='all, delete-orphan')
+    subscription = db.relationship('Subscription', backref='user', uselist=False, cascade='all, delete-orphan')
 
     def to_dict(self):
         return {
@@ -132,6 +133,24 @@ class UserError(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     question_id = db.Column(db.Integer, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class Subscription(db.Model):
+    __tablename__ = 'subscriptions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    plan = db.Column(db.String(20), default='free')  # free, pro
+    started_at = db.Column(db.DateTime, default=datetime.utcnow)
+    expires_at = db.Column(db.DateTime, nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+
+    def to_dict(self):
+        return {
+            'plan': self.plan,
+            'is_active': self.is_active,
+            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
+        }
 
 
 class Category(db.Model):
@@ -333,6 +352,12 @@ def get_user():
         'stats': user.stats.to_dict() if user.stats else {},
         'category_stats': [cs.to_dict() for cs in user.category_stats],
         'errors': [e.question_id for e in user.errors],
+        'subscription': {
+            'plan': get_user_subscription(user).plan,
+            'is_pro': is_pro(user),
+            'error_limit': get_error_limit(user),
+            'error_count': UserError.query.filter_by(user_id=user.id).count(),
+        },
     })
 
 
@@ -523,15 +548,22 @@ def submit_answer():
     if is_correct:
         cat_stats.correct += 1
 
-    # Track errors
+    # Track errors + enforce free plan limit
+    error_blocked = False
     if not is_correct:
         existing_error = UserError.query.filter_by(
             user_id=user.id, question_id=question_id
         ).first()
 
         if not existing_error:
-            error = UserError(user_id=user.id, question_id=question_id)
-            db.session.add(error)
+            error_limit = get_error_limit(user)
+            current_errors = UserError.query.filter_by(user_id=user.id).count()
+
+            if error_limit is not None and current_errors >= error_limit:
+                error_blocked = True
+            else:
+                error = UserError(user_id=user.id, question_id=question_id)
+                db.session.add(error)
 
     # Update streak
     today = date.today().isoformat()
@@ -549,11 +581,18 @@ def submit_answer():
 
     db.session.commit()
 
+    error_limit = get_error_limit(user)
+    error_count = UserError.query.filter_by(user_id=user.id).count()
+
     return jsonify({
         'is_correct': is_correct,
         'correct_options': correct,
         'explanation': question.explanation,
         'stats': stats.to_dict(),
+        'error_blocked': error_blocked,
+        'error_limit': error_limit,
+        'error_count': error_count,
+        'errors_remaining': None if error_limit is None else max(0, error_limit - error_count),
     })
 
 
@@ -722,6 +761,94 @@ def delete_category(cat_id):
     db.session.commit()
     logger.info(f'Category deleted: {slug}')
     return jsonify({'message': f'Deleted {slug}'})
+
+
+# ============================================
+# SUBSCRIPTION HELPERS
+# ============================================
+
+FREE_ERROR_LIMIT = 10
+
+
+def get_user_subscription(user):
+    """Get or create subscription for user."""
+    sub = Subscription.query.filter_by(user_id=user.id).first()
+    if not sub:
+        sub = Subscription(user_id=user.id, plan='free', is_active=True)
+        db.session.add(sub)
+        db.session.commit()
+    return sub
+
+
+def is_pro(user):
+    """Check if user has active Pro subscription."""
+    sub = get_user_subscription(user)
+    if sub.plan == 'pro' and sub.is_active:
+        if sub.expires_at and sub.expires_at > datetime.utcnow():
+            return True
+        elif not sub.expires_at:
+            return True
+    return False
+
+
+def get_error_limit(user):
+    """Return error limit for user. None = unlimited."""
+    if is_pro(user):
+        return None  # unlimited
+    return FREE_ERROR_LIMIT
+
+
+# ============================================
+# API: SUBSCRIPTION
+# ============================================
+@app.route('/api/subscription', methods=['GET'])
+@require_auth
+def get_subscription():
+    """Get current subscription info."""
+    tg_id = request.tg_user['id']
+    user = User.query.filter_by(tg_id=tg_id).first()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    sub = get_user_subscription(user)
+    error_count = UserError.query.filter_by(user_id=user.id).count()
+    error_limit = get_error_limit(user)
+
+    return jsonify({
+        'plan': sub.plan,
+        'is_active': sub.is_active,
+        'expires_at': sub.expires_at.isoformat() if sub.expires_at else None,
+        'is_pro': is_pro(user),
+        'error_count': error_count,
+        'error_limit': error_limit,  # None = unlimited
+        'errors_remaining': None if error_limit is None else max(0, error_limit - error_count),
+    })
+
+
+@app.route('/api/subscription/activate', methods=['POST'])
+@require_auth
+def activate_subscription():
+    """Activate Pro subscription (called after Telegram Stars payment)."""
+    tg_id = request.tg_user['id']
+    user = User.query.filter_by(tg_id=tg_id).first()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    sub = get_user_subscription(user)
+    sub.plan = 'pro'
+    sub.is_active = True
+    sub.started_at = datetime.utcnow()
+    # 30 days from now
+    from datetime import timedelta
+    sub.expires_at = datetime.utcnow() + timedelta(days=30)
+    db.session.commit()
+
+    logger.info(f'Pro activated: user={tg_id}')
+    return jsonify({
+        'plan': 'pro',
+        'expires_at': sub.expires_at.isoformat(),
+        'message': 'Pro subscription activated!'
+    })
 
 
 # ============================================
