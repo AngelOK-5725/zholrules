@@ -768,6 +768,7 @@ def delete_category(cat_id):
 # ============================================
 
 FREE_ERROR_LIMIT = 10
+PRO_STARS_PRICE = 1500  # Telegram Stars per month
 
 
 def get_user_subscription(user):

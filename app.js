@@ -229,7 +229,7 @@ function renderSubscriptionCard() {
           <div class="sub-progress-fill" style="width: ${pct}%; background: ${pct >= 80 ? 'var(--red)' : 'var(--primary)'};"></div>
         </div>
         <button class="btn btn-primary" style="margin-top:12px;width:100%;" onclick="buyProWithStars()">
-          ⭐ Купить Pro — 150 Stars / мес
+          ⭐ Купить Pro — 1500 Stars / мес
         </button>
         <p class="sub-note">Без ограничений: тесты, ошибки, экзамен</p>
       </div>
