@@ -9,7 +9,7 @@ import hashlib
 import hmac
 import time
 from functools import wraps
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
@@ -840,7 +840,6 @@ def activate_subscription():
     sub.is_active = True
     sub.started_at = datetime.utcnow()
     # 30 days from now
-    from datetime import timedelta
     sub.expires_at = datetime.utcnow() + timedelta(days=30)
     db.session.commit()
 
@@ -850,6 +849,191 @@ def activate_subscription():
         'expires_at': sub.expires_at.isoformat(),
         'message': 'Pro subscription activated!'
     })
+
+
+# ============================================
+# API: PAYMENTS (Telegram Stars)
+# ============================================
+@app.route('/api/payment/invoice', methods=['POST'])
+@require_auth
+def create_invoice():
+    """Create a Telegram Stars invoice link for Pro subscription."""
+    import requests as http_requests
+
+    tg_id = request.tg_user['id']
+    bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
+    if not bot_token:
+        return jsonify({'error': 'Bot token not configured'}), 500
+
+    # Build payload
+    payload = json.dumps({
+        'user_id': tg_id,
+        'product': 'pro_subscription',
+        'duration_days': 30,
+        'timestamp': int(time.time()),
+    })
+
+    # Create invoice link via Telegram Bot API
+    resp = http_requests.post(
+        f'https://api.telegram.org/bot{bot_token}/createInvoiceLink',
+        json={
+            'title': 'ZholRules Pro',
+            'description': 'Pro подписка на 30 дней — безлимитные тесты и ошибки',
+            'payload': payload,
+            'provider_token': '',  # Empty for Telegram Stars
+            'currency': 'XTR',  # Telegram Stars
+            'prices': [{'label': 'Pro 30 дней', 'amount': PRO_STARS_PRICE}],
+        },
+        timeout=10,
+    )
+
+    data = resp.json()
+    if not data.get('ok'):
+        logger.error(f'Invoice creation failed: {data}')
+        return jsonify({'error': 'Failed to create invoice', 'details': data}), 500
+
+    logger.info(f'Invoice created: user={tg_id} amount={PRO_STARS_PRICE} Stars')
+    return jsonify({
+        'invoice_url': data['result'],
+        'amount': PRO_STARS_PRICE,
+    })
+
+
+@app.route('/webhook/telegram', methods=['POST'])
+def telegram_webhook():
+    """Telegram webhook for payments and other events."""
+    import requests as http_requests
+
+    bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
+    update = request.get_json(force=True)
+
+    # Step 1: Handle pre-checkout (approve the payment)
+    if 'pre_checkout_query' in update:
+        query = update['pre_checkout_query']
+        payload_str = query.get('invoice_payload', '{}')
+
+        try:
+            payload = json.loads(payload_str)
+        except Exception:
+            payload = {}
+
+        user_id = payload.get('user_id', 0)
+        product = payload.get('product', '')
+
+        if product != 'pro_subscription':
+            # Reject unknown products
+            http_requests.post(
+                f'https://api.telegram.org/bot{bot_token}/answerPreCheckoutQuery',
+                json={'pre_checkout_query_id': query['id'], 'ok': False,
+                      'error_message': 'Неизвестный товар'},
+                timeout=5,
+            )
+            return jsonify({'ok': True})
+
+        # Approve
+        http_requests.post(
+            f'https://api.telegram.org/bot{bot_token}/answerPreCheckoutQuery',
+            json={'pre_checkout_query_id': query['id'], 'ok': True},
+            timeout=5,
+        )
+        logger.info(f'Pre-checkout approved: user={user_id} product={product}')
+        return jsonify({'ok': True})
+
+    # Step 2: Handle successful payment
+    if update.get('message', {}).get('successful_payment'):
+        payment = update['message']['successful_payment']
+        user_id = update['message']['from']['id']
+        payload_str = payment.get('invoice_payload', '{}')
+
+        try:
+            payload = json.loads(payload_str)
+        except Exception:
+            payload = {}
+
+        product = payload.get('product', '')
+        duration = payload.get('duration_days', 30)
+        telegram_charge_id = payment.get('telegram_payment_charge_id', '')
+
+        if product == 'pro_subscription':
+            # Find user and activate subscription
+            user = User.query.filter_by(tg_id=user_id).first()
+            if user:
+                sub = get_user_subscription(user)
+                sub.plan = 'pro'
+                sub.is_active = True
+                sub.started_at = datetime.utcnow()
+                sub.expires_at = datetime.utcnow() + timedelta(days=duration)
+                db.session.commit()
+
+                logger.info(f'Pro activated via webhook: user={user_id} expires={sub.expires_at}')
+
+                # Send confirmation message
+                http_requests.post(
+                    f'https://api.telegram.org/bot{bot_token}/sendMessage',
+                    json={
+                        'chat_id': user_id,
+                        'text': f'✅ Pro подписка активирована!\n\n'
+                                f'Действует 30 дней.\n'
+                                f'Безлимитные тесты и ошибки.\n\n'
+                                f'Чек: `{telegram_charge_id[:20]}...`',
+                        'parse_mode': 'Markdown',
+                    },
+                    timeout=5,
+                )
+            else:
+                logger.error(f'User not found for webhook payment: {user_id}')
+
+        return jsonify({'ok': True})
+
+    # Step 3: Handle refund (optional)
+    if update.get('message', {}).get('successful_payment'):
+        pass  # Already handled above
+
+    # Handle /paysupport command
+    if update.get('message', {}).get('text') == '/paysupport':
+        chat_id = update['message']['from']['id']
+        http_requests.post(
+            f'https://api.telegram.org/bot{bot_token}/sendMessage',
+            json={
+                'chat_id': chat_id,
+                'text': '🛟 По вопросам оплаты напишите @angelok_5725',
+            },
+            timeout=5,
+        )
+        return jsonify({'ok': True})
+
+    return jsonify({'ok': True})
+
+
+@app.route('/api/webhook/setup', methods=['POST'])
+def setup_webhook():
+    """Setup Telegram webhook URL (run once after deploy)."""
+    import requests as http_requests
+
+    bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
+    if not bot_token:
+        return jsonify({'error': 'No bot token'}), 500
+
+    # Determine webhook URL from request
+    webhook_url = request.get_json().get('url', '')
+    if not webhook_url:
+        return jsonify({'error': 'Missing url in body'}), 400
+
+    resp = http_requests.post(
+        f'https://api.telegram.org/bot{bot_token}/setWebhook',
+        json={
+            'url': webhook_url,
+            'allowed_updates': ['message', 'pre_checkout_query'],
+        },
+        timeout=10,
+    )
+
+    data = resp.json()
+    if data.get('ok'):
+        logger.info(f'Webhook set: {webhook_url}')
+        return jsonify({'ok': True, 'url': webhook_url})
+    else:
+        return jsonify({'ok': False, 'error': data.get('description', 'Unknown')}), 500
 
 
 # ============================================

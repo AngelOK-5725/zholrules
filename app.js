@@ -243,15 +243,26 @@ async function buyProWithStars() {
     const tg = window.Telegram.WebApp;
     if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
       try {
-        const res = await apiPost('/api/subscription/activate', {});
-        if (res.ok) {
-          state.subscription = { ...state.subscription, plan: 'pro', is_pro: true };
-          renderSubscriptionCard();
-          tg.showAlert('Pro подписка активирована! 🎉');
-        } else {
-          tg.showAlert('Ошибка активации. Попробуйте позже.');
-        }
+        // Step 1: Create invoice link from backend
+        const invoiceData = await apiPost('/api/payment/invoice', {});
+        const { invoice_url } = invoiceData;
+
+        // Step 2: Open Telegram payment UI
+        tg.openInvoice(invoice_url, (status) => {
+          if (status === 'paid') {
+            // Step 3: Payment successful — webhook will activate subscription
+            // Reload subscription data
+            fetchUserProfile();
+            renderSubscriptionCard();
+            tg.showAlert('Pro подписка активирована! 🎉\n\nДействует 30 дней.');
+          } else if (status === 'cancelled') {
+            // User cancelled
+          } else if (status === 'failed') {
+            tg.showAlert('Ошибка оплаты. Попробуйте позже.');
+          }
+        });
       } catch(e) {
+        console.error('Payment error:', e);
         tg.showAlert('Ошибка сети. Попробуйте позже.');
       }
       return;
