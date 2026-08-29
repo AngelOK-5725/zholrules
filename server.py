@@ -34,7 +34,12 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'http://localhost:5000').split(',')
 CORS(app, origins=CORS_ORIGINS)
 
-# Database
+# Database — fallback to SQLite if DATABASE_URL not set
+database_url = os.getenv('DATABASE_URL', '').strip()
+if not database_url:
+    database_url = 'sqlite:///zholrules.db'
+    logger.warning('DATABASE_URL not set, using local SQLite')
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 db = SQLAlchemy(app)
 
 # ============================================
