@@ -60,17 +60,24 @@ let timerInterval = null;
 // ============================================
 document.addEventListener('DOMContentLoaded', async () => {
   // Initialize Telegram WebApp
-  if (window.Telegram && window.Telegram.WebApp) {
-    Telegram.WebApp.ready();
-    Telegram.WebApp.expand();
+  const tg = window.Telegram?.WebApp;
+  console.log('[ZholRules] Telegram.WebApp exists:', !!tg);
+  console.log('[ZholRules] initData:', tg?.initData ? tg.initData.substring(0, 80) + '...' : 'EMPTY');
+  console.log('[ZholRules] initDataUnsafe:', JSON.stringify(tg?.initDataUnsafe?.user || null));
 
-    const user = Telegram.WebApp.initDataUnsafe?.user;
+  if (tg) {
+    tg.ready();
+    tg.expand();
+
+    const user = tg.initDataUnsafe?.user;
     if (user) {
       state.user.id = user.id;
       state.user.name = user.first_name || user.username || 'друг';
+      console.log('[ZholRules] User from Telegram:', user.id, user.first_name);
     }
   } else {
     // Dev mode
+    console.log('[ZholRules] No Telegram SDK — dev mode');
     state.user.name = 'Тестер';
     state.user.id = 12345678;
   }
@@ -110,6 +117,8 @@ async function loadQuestions() {
 // ============================================
 function getAuthHeaders() {
   const initData = window.Telegram?.WebApp?.initData || '';
+  const hasInitData = !!initData;
+  console.log('[ZholRules] getAuthHeaders: initData length =', initData.length, 'hasInitData =', hasInitData);
   return initData ? { 'Authorization': `tma ${initData}` } : {};
 }
 
