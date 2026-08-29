@@ -700,15 +700,18 @@ def init_db():
 
 
 # ============================================
+# INIT DB ON STARTUP (works with gunicorn too)
+# ============================================
+with app.app_context():
+    init_db()
+
+# ============================================
 # RUN
 # ============================================
 if __name__ == '__main__':
     # Setup logging
     os.makedirs('logs', exist_ok=True)
     logger.add('logs/zholrules.log', rotation='10 MB', level=os.getenv('LOG_LEVEL', 'INFO'))
-
-    # Init database
-    init_db()
 
     # Run server
     port = int(os.getenv('PORT', 5000))
