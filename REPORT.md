@@ -7,9 +7,9 @@
 
 ## 1. Текущее состояние
 
-### Общая оценка: 7/10 (Рабочий MVP)
+### Общая оценка: 8.5/10 (Рабочий MVP с монетизацией)
 
-Приложение функционально: пользователи могут проходить тесты, играть в мини-игру, видеть статистику. Админ-панель работает — можно добавлять вопросы и категории. Авторизация через Telegram настроена и проверена.
+Приложение полностью функционально: авторизация через Telegram работает, база данных Neon PostgreSQL подключена, подписка Pro с оплатой через Telegram Stars настроена, админ-панель с вопросами и категориями работает, двуязычный интерфейс (RU/KZ).
 
 ### Что работает
 
@@ -18,37 +18,51 @@
 | Фронтенд (GitHub Pages) | Работает | Автодеплой при пуше |
 | Бэкенд (Render.com) | Работает | API отвечает |
 | Telegram Auth | Работает | HMAC валидация (dec_lf_sig) |
-| Admin Panel | Работает | Вопросы + категории |
+| Admin Panel | Работает | Вопросы + категории CRUD |
 | Тестирование | Работает | 4 режима, 80 вопросов |
 | Мини-игра | Работает | 60 сек, комбо-система |
-| Профиль/Статистика | Работает | Стрик, прогресс |
-| Монетизация (UI) | Заглушка | Telegram Stars не подключены |
+| Профиль/Статистика | Работает | Стрик, прогресс по категориям |
+| **Neon PostgreSQL** | Работает | Данные сохраняются |
+| **Subscription** | Работает | Free (10 ошибок) / Pro (безлимит) |
+| **Telegram Stars** | Работает | Invoice + webhook |
+| **Keepalive** | Работает | GitHub Actions cron каждые 10 мин |
+| **Двуязычность** | Работает | Русский + Қазақша |
+| **Dark Mode** | Работает | Настоящий #121212 |
+| **CORS** | Заблокирован | Только angelok-5725.github.io |
+| **Обработка ошибок** | Работает | 401/403/404/500 сообщения |
 
-### Что НЕ работает / Проблемы
+### Что НЕ работает / Нужно доделать
 
 | Проблема | Серьёзность | Описание |
 |----------|-------------|----------|
-| SQLite теряется | КРИТИЧНО | Render free tier перезапускает контейнер, БД удаляется |
-| Render засыпает | ВАЖНО | Cold start ~30 сек после 15 мин простоя |
-| Нет CSRF | СРЕДНЕ | API принимает запросы с любого Origin |
-| Тёмная тема | НИЗКО | Становится синеватой вместо настоящего dark mode |
-| Debug-логи | НИЗКО | Много console.log осталось в app.js |
+| Webhook не настроен | ВАЖНО | Нужно выполнить setup_webhook.py |
+| Render cold start | СРЕДНЕ | ~30 сек простоя (keepalive частично решает) |
+| Нет rate limiting | НИЗКО | API не защищён от спама |
+| Нет пагинации | НИЗКО | 80 вопросов грузятся все сразу |
 
 ---
 
 ## 2. Архитектура
 
 ```
-[Telegram Mini App]
+[Telegram Mini App (Telegram-Android/IOS)]
        |
-       | initData (HMAC)
+       | initData (HMAC-SHA256)
        v
 [GitHub Pages]  ──CORS──>  [Render.com / Flask API]
-  (фронтенд)                 (server.py)
-                               |
-                               v
-                           [SQLite DB]
-                           (ephemeral!)
+  (фронтенд)                 (server.py + Gunicorn)
+       |                         |
+       |                         v
+       |                   [Neon PostgreSQL]
+       |                   (persistent!)
+       |
+       | Telegram Stars
+       v
+[Telegram Bot API]
+       |
+       | webhook /webhook/telegram
+       v
+[Render.com] ──> activates subscription
 ```
 
 ### Стек технологий
@@ -57,23 +71,30 @@
 |------|-----------|
 | Фронтенд | HTML5, CSS3 (Telegram WebApp vars), Vanilla JS |
 | Бэкенд | Python 3.14, Flask, SQLAlchemy, Gunicorn |
-| База данных | SQLite (local, не persistent на Render) |
+| База данных | Neon PostgreSQL (free tier, 512 MB) |
 | Деплой фронта | GitHub Pages + GitHub Actions |
 | Деплой бэкенда | Render.com (Free tier) |
 | Авторизация | Telegram WebApp HMAC-SHA256 |
+| Оплаты | Telegram Stars (1500 Stars / мес) |
+| Переводы | Встроенные (RU/KZ) |
 
 ### Структура файлов
 
 ```
 zholrules/
-  index.html          - Основной HTML (435 строк)
-  style.css           - Стили (1675 строк)
-  app.js              - Фронтенд логика (1291 строка)
-  server.py           - Бэкенд API (750 строк)
-  data/questions.json  - 80 вопросов ПДД РК
-  tests/test_auth.py   - 13 тестов
-  requirements.txt     - Python зависимости
-  .env                 - Секреты (gitignored)
+  index.html              - Основной HTML (~500 строк)
+  style.css               - Стили (~1700 строк)
+  app.js                  - Фронтенд логика (~1700 строк)
+  server.py               - Бэкенд API (~1100 строк)
+  setup_webhook.py        - Скрипт настройки webhook
+  data/questions.json      - 80 вопросов ПДД РК
+  tests/test_auth.py       - 13 тестов
+  requirements.txt         - Python зависимости
+  .env                     - Секреты (gitignored)
+  .github/workflows/
+    deploy.yml             - Автодеплой фронта
+    keepalive.yml          - Пинг Render каждые 10 мин
+  retro/                   - Ретро ASCII-версия (эксперимент)
 ```
 
 ---
@@ -83,12 +104,13 @@ zholrules/
 | Метод | Путь | Описание | Auth |
 |-------|------|----------|------|
 | GET | /api/health | Healthcheck | Нет |
-| GET | /api/user | Профиль + admin check | Да |
+| GET | /api/user | Профиль + stats + subscription | Да |
 | PATCH | /api/user | Обновление профиля | Да |
 | GET | /api/questions | Список вопросов | Нет |
 | POST | /api/questions | Создание вопроса | Admin |
 | DELETE | /api/questions/:id | Удаление вопроса | Admin |
 | GET | /api/questions/export | Экспорт JSON | Нет |
+| POST | /api/questions/import | Импорт JSON | Admin |
 | POST | /api/answer | Отправка ответа | Да |
 | GET | /api/errors | Ошибки пользователя | Да |
 | DELETE | /api/errors/:id | Удаление из ошибок | Да |
@@ -98,64 +120,109 @@ zholrules/
 | DELETE | /api/categories/:id | Удаление категории | Admin |
 | GET | /api/leaderboard | Лидерборд | Нет |
 | POST | /api/game-score | Обновление рекорда | Да |
+| GET | /api/subscription | Инфо о подписке | Да |
+| POST | /api/subscription/activate | Активация Pro | Да |
+| POST | /api/payment/invoice | Создание invoice для Stars | Да |
+| POST | /webhook/telegram | Telegram webhook (оплата) | Нет |
+| POST | /api/webhook/setup | Настройка webhook URL | Нет |
 
 ---
 
-## 4. Безопасность
+## 4. Подписка и монетизация
 
-### Что защищено
-- Telegram WebApp HMAC валидация (dec_lf_sig)
+### Модель
+
+| План | Стоимость | Ошибки | Тесты | Симулятор ЦОН |
+|------|-----------|--------|-------|---------------|
+| **Free** | 0 ₸ | 10 макс. | Без ограничений | Нет |
+| **Pro** | 1500 Stars/мес (~13 860 ₸) | Безлимит | Без ограничений | Да |
+
+### Flow оплаты
+
+```
+1. Пользователь нажимает "Купить Pro"
+2. Фронтенд → POST /api/payment/invoice
+3. Бэкенд → createInvoiceLink (Bot API)
+4. Telegram открывает окно оплаты
+5. Пользователь платит 1500 Stars
+6. Telegram → POST /webhook/telegram (pre_checkout)
+7. Бэкенд → answerPreCheckoutQuery(ok=True)
+8. Telegram → POST /webhook/telegram (successful_payment)
+9. Бэкенд → активирует подписку на 30 дней
+10. Пользователь получает подтверждение в чат
+```
+
+### Настройка webhook
+
+```bash
+# Один раз после деплоя:
+python setup_webhook.py https://zholrules.onrender.com/webhook/telegram
+```
+
+---
+
+## 5. Безопасность
+
+### Защищено
+
+- Telegram WebApp HMAC валидация (dec_lf_sig, включая signature)
 - Admin-проверка на сервере (OWNER_TELEGRAM_ID из .env)
+- CORS заблокирован на angelok-5725.github.io
 - Секреты в .env (gitignored)
-- .vscode/ gitignored
-- venv/ gitignored
+- Подпись webhook от Telegram (HMAC)
+- 24-часовое окно auth_date (не 5 мин)
 
-### Что нужно усилить
-- CSRF protection (текущий CORS разрешает GitHub Pages)
+### Нужно усилить
+
 - Rate limiting на API эндпоинты
-- Валидация входных данных на сервере
-- Защита от брутфорса
+- CSRF token для форм
+- Валидация длинны полей на сервере
+- Логирование подозрительной активности
 
 ---
 
-## 5. Рекомендации по улучшению
+## 6. Рекомендации по улучшению
 
-### Приоритет 1: Стабильность (сделать ASAP)
-1. **Neon PostgreSQL** - заменить SQLite. Без этого данные пользователей теряются при каждом перезапуске Render.
-2. **Rate limiting** - добавить flask-limiter (уже в requirements.txt)
-3. **Убрать debug-логи** - console.log в app.js, logger.info в server.py
+### Приоритет 1: Стабильность
+1. **Настроить webhook** — выполнить setup_webhook.py
+2. **Rate limiting** — flask-limiter для защиты API
+3. **Мониторинг** — Sentry или аналог для ошибок
 
-### Приоритет 2: UX (сделать до запуска)
-1. **Пагинация вопросов** - не грузить все 80+ сразу
-2. **Поиск вопросов** - фильтрация по тексту
-3. **Обработка ошибок на фронте** - показывать пользователю что пошло не так
-4. **Валидация форм** - проверка полей до отправки
+### Приоритет 2: UX
+1. **Пагинация вопросов** — не грузить все 80+ сразу
+2. **Поиск по вопросам** — фильтрация по тексту
+3. **Push-уведомления** — напоминания о тренировках
+4. **Оффлайн режим** — Service Worker для работы без интернета
 
-### Приоритет 3: Контент (после запуска)
-1. **Расширить базу вопросов** - до 200+
-2. **Загрузка медиа** - Cloudinary для фото/видео
-3. **Видео-разборы** - встраивание YouTube
-4. **Мультиязычность** - казахский язык
+### Приоритет 3: Контент
+1. **Расширить базу вопросов** — до 200+ с медиа
+2. **Видео-разборы** — встраивание YouTube
+3. **Симулятор ЦОНа** — VIP-фича для Pro
+4. **Геймификация** — достижения, уровни, награды
 
-### Приоритет 4: Монетизация (когда будет трафик)
-1. **Telegram Payments** - реальные платежи через Bot API
-2. **Реклама** - Telegram Ads API
-3. **Реферальная система**
+### Приоритет 4: Масштабирование
+1. **Neon PostgreSQL** — уже подключена, масштабировать при росте
+2. **CDN** — Cloudflare для статики
+3. **Кэширование** — Redis для leaderboard
+4. **Аналитика** — Telegram Mini Apps Analytics
 
 ---
 
-## 6. Метрики проекта
+## 7. Метрики проекта
 
 | Метрика | Значение |
 |---------|----------|
 | Вопросов в базе | 80 |
 | Категорий | 10 |
-| API эндпоинтов | 16 |
+| API эндпоинтов | 22 |
 | Тестов | 13 |
-| Файлов в проекте | 12 |
-| Строк кода (approx) | ~4500 |
-| Время разработки | ~4 часа |
+| Файлов в проекте | ~18 |
+| Строк кода (approx) | ~5000 |
+| Языки интерфейса | 2 (RU, KZ) |
+| Стоимость подписки | 1500 Stars/мес |
+| Деплой | GitHub Pages + Render.com |
+| База данных | Neon PostgreSQL |
 
 ---
 
-*Отчёт составлен: 29 августа 2026*
+*Отчёт обновлён: 29 августа 2026*
