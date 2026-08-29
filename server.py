@@ -36,12 +36,20 @@ DEFAULT_ORIGINS = 'http://localhost:5000,https://angelok-5725.github.io'
 CORS_ORIGINS = os.getenv('CORS_ORIGINS', DEFAULT_ORIGINS).split(',')
 CORS(app, origins=CORS_ORIGINS)
 
-# Database — fallback to SQLite if DATABASE_URL not set
+# Database — Neon PostgreSQL or SQLite fallback
 database_url = os.getenv('DATABASE_URL', '').strip()
 if not database_url:
     database_url = 'sqlite:///zholrules.db'
     logger.warning('DATABASE_URL not set, using local SQLite')
+else:
+    logger.info(f'Using database: {database_url[:40]}...')
+
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_pre_ping': True,
+    'pool_recycle': 300,
+    'connect_args': {'sslmode': 'require'} if 'postgresql' in database_url else {},
+}
 db = SQLAlchemy(app)
 
 # ============================================

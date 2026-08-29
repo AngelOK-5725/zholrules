@@ -5,6 +5,7 @@
 # --- Project files ---
 TODO.md
 *.todo
+Отчет.txt
 
 # --- IDE ---
 .vscode/
