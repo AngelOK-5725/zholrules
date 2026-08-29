@@ -127,6 +127,28 @@ class UserError(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class Category(db.Model):
+    __tablename__ = 'categories'
+
+    id = db.Column(db.Integer, primary_key=True)
+    slug = db.Column(db.String(50), unique=True, nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    icon = db.Column(db.String(10), default='📚')
+    color = db.Column(db.String(7), default='#FFB300')
+    sort_order = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'slug': self.slug,
+            'name': self.name,
+            'icon': self.icon,
+            'color': self.color,
+            'sort_order': self.sort_order,
+        }
+
+
 class Question(db.Model):
     __tablename__ = 'questions'
 
@@ -633,23 +655,80 @@ def update_game_score():
 @app.route('/api/categories', methods=['GET'])
 def get_categories():
     """Get available categories with question counts."""
-    categories = [
-        {"id": "znaki", "name": "Дорожные знаки", "icon": "🚸", "color": "#FFD700"},
-        {"id": "razmetka", "name": "Дорожная разметка", "icon": "⬜", "color": "#FFFFFF"},
-        {"id": "prioritet", "name": "Приоритет и проезд", "icon": "🚦", "color": "#FF4444"},
-        {"id": "skorost", "name": "Скорость и дистанция", "icon": "💨", "color": "#FF6B00"},
-        {"id": "manevr", "name": "Маневрирование", "icon": "🔄", "color": "#4CAF50"},
-        {"id": "ostanovka", "name": "Остановка и стоянка", "icon": "🅿️", "color": "#2196F3"},
-        {"id": "svetofor", "name": "Светофоры и регулировщики", "icon": "🚦", "color": "#E91E63"},
-        {"id": "pešhodcy", "name": "Пешеходы и пассажиры", "icon": "🚶", "color": "#9C27B0"},
-        {"id": "dtp", "name": "ДТП и безопасность", "icon": "🚑", "color": "#F44336"},
-        {"id": "osnovy", "name": "Основы ПДД", "icon": "📖", "color": "#00BCD4"},
-    ]
+    cats = Category.query.order_by(Category.sort_order, Category.name).all()
+    result = []
+    for cat in cats:
+        d = cat.to_dict()
+        d['count'] = Question.query.filter_by(category=cat.slug).count()
+        result.append(d)
+    return jsonify(result)
 
-    for cat in categories:
-        cat['count'] = Question.query.filter_by(category=cat['id']).count()
 
-    return jsonify(categories)
+@app.route('/api/categories', methods=['POST'])
+@require_auth
+@require_admin
+def create_category():
+    """Create a new category (admin only)."""
+    data = request.get_json()
+    name = data.get('name', '').strip()
+    if not name:
+        return jsonify({'error': 'Name required'}), 400
+
+    slug = data.get('slug', '').strip()
+    if not slug:
+        slug = name.lower().replace(' ', '-').replace('_', '-')
+
+    if Category.query.filter_by(slug=slug).first():
+        return jsonify({'error': f'Category "{slug}" already exists'}), 409
+
+    cat = Category(
+        slug=slug,
+        name=name,
+        icon=data.get('icon', '📚'),
+        color=data.get('color', '#FFB300'),
+        sort_order=data.get('sort_order', 0),
+    )
+    db.session.add(cat)
+    db.session.commit()
+    logger.info(f'Category created: {slug} ({name})')
+    return jsonify(cat.to_dict()), 201
+
+
+@app.route('/api/categories/<int:cat_id>', methods=['PUT'])
+@require_auth
+@require_admin
+def update_category(cat_id):
+    """Update a category (admin only)."""
+    cat = Category.query.get_or_404(cat_id)
+    data = request.get_json()
+
+    if 'name' in data:
+        cat.name = data['name']
+    if 'slug' in data:
+        cat.slug = data['slug']
+    if 'icon' in data:
+        cat.icon = data['icon']
+    if 'color' in data:
+        cat.color = data['color']
+    if 'sort_order' in data:
+        cat.sort_order = data['sort_order']
+
+    db.session.commit()
+    logger.info(f'Category updated: {cat.slug}')
+    return jsonify(cat.to_dict())
+
+
+@app.route('/api/categories/<int:cat_id>', methods=['DELETE'])
+@require_auth
+@require_admin
+def delete_category(cat_id):
+    """Delete a category (admin only)."""
+    cat = Category.query.get_or_404(cat_id)
+    slug = cat.slug
+    db.session.delete(cat)
+    db.session.commit()
+    logger.info(f'Category deleted: {slug}')
+    return jsonify({'message': f'Deleted {slug}'})
 
 
 # ============================================
@@ -668,10 +747,32 @@ def health():
 # ============================================
 # DATABASE INIT
 # ============================================
+DEFAULT_CATEGORIES = [
+    {'slug': 'znaki', 'name': 'Дорожные знаки', 'icon': '🚸', 'color': '#FFD700', 'sort_order': 1},
+    {'slug': 'razmetka', 'name': 'Дорожная разметка', 'icon': '⬜', 'color': '#FFFFFF', 'sort_order': 2},
+    {'slug': 'prioritet', 'name': 'Приоритет и проезд', 'icon': '🚦', 'color': '#FF4444', 'sort_order': 3},
+    {'slug': 'skorost', 'name': 'Скорость и дистанция', 'icon': '💨', 'color': '#FF6B00', 'sort_order': 4},
+    {'slug': 'manevr', 'name': 'Маневрирование', 'icon': '🔄', 'color': '#4CAF50', 'sort_order': 5},
+    {'slug': 'ostanovka', 'name': 'Остановка и стоянка', 'icon': '🅿️', 'color': '#2196F3', 'sort_order': 6},
+    {'slug': 'svetofor', 'name': 'Светофоры и регулировщики', 'icon': '🚦', 'color': '#E91E63', 'sort_order': 7},
+    {'slug': 'peschodcy', 'name': 'Пешеходы и пассажиры', 'icon': '🚶', 'color': '#9C27B0', 'sort_order': 8},
+    {'slug': 'dtp', 'name': 'ДТП и безопасность', 'icon': '🚑', 'color': '#F44336', 'sort_order': 9},
+    {'slug': 'osnovy', 'name': 'Основы ПДД', 'icon': '📖', 'color': '#00BCD4', 'sort_order': 10},
+]
+
+
 def init_db():
-    """Create tables and seed questions from JSON."""
+    """Create tables and seed data from JSON."""
     with app.app_context():
         db.create_all()
+
+        # Seed default categories if empty
+        if Category.query.count() == 0:
+            for cat_data in DEFAULT_CATEGORIES:
+                cat = Category(**cat_data)
+                db.session.add(cat)
+            db.session.commit()
+            logger.info(f'Seeded {len(DEFAULT_CATEGORIES)} default categories')
 
         # Seed questions from JSON if empty
         if Question.query.count() == 0:

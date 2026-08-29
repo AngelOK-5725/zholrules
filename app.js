@@ -1000,6 +1000,8 @@ function switchAdminTab(tab) {
     renderAdminQuestionsList();
   } else if (tab === 'create') {
     populateAdminCategories();
+  } else if (tab === 'categories') {
+    renderAdminCategoriesList();
   } else if (tab === 'export') {
     renderExportPreview();
   }
@@ -1159,6 +1161,78 @@ function loadCustomQuestions() {
 
 function renderExportPreview() {
   document.getElementById('export-preview').value = JSON.stringify(questionsData, null, 2);
+}
+
+// ============================================
+// ADMIN: CATEGORIES MANAGEMENT
+// ============================================
+async function renderAdminCategoriesList() {
+  try {
+    const categories = await apiGet('/api/categories');
+    const container = document.getElementById('categories-admin-list');
+    container.innerHTML = categories.map(cat => `
+      <div class="admin-question-card">
+        <span style="font-size:24px;">${cat.icon}</span>
+        <div style="flex:1;">
+          <div style="font-weight:600;">${cat.name}</div>
+          <div style="font-size:12px;color:var(--tg-theme-hint-color);">
+            slug: ${cat.slug} | ${cat.count || 0} вопросов
+          </div>
+        </div>
+        <span style="width:24px;height:24px;border-radius:50%;background:${cat.color};display:inline-block;"></span>
+        <button class="admin-q-delete" onclick="deleteCategory(${cat.id})">🗑️</button>
+      </div>
+    `).join('');
+  } catch (e) {
+    console.error('Failed to load categories:', e);
+  }
+}
+
+async function createCategory() {
+  const name = document.getElementById('cat-name').value.trim();
+  const slug = document.getElementById('cat-slug').value.trim();
+  const icon = document.getElementById('cat-icon').value.trim() || '📚';
+  const color = document.getElementById('cat-color-hex').value.trim() || '#FFB300';
+
+  if (!name) {
+    alert('Введите название категории');
+    return;
+  }
+
+  try {
+    const result = await apiPost('/api/categories', { name, slug, icon, color });
+    alert(`Категория «${result.name}» создана!`);
+
+    // Clear form
+    document.getElementById('cat-name').value = '';
+    document.getElementById('cat-slug').value = '';
+    document.getElementById('cat-icon').value = '📚';
+    document.getElementById('cat-color-hex').value = '#FFB300';
+    document.getElementById('cat-color').value = '#FFB300';
+
+    // Refresh list
+    renderAdminCategoriesList();
+  } catch (e) {
+    alert(`Ошибка: ${e.message}`);
+  }
+}
+
+async function deleteCategory(id) {
+  if (!confirm('Удалить эту категорию?')) return;
+
+  try {
+    await apiGet(`/api/categories/${id}`);  // not really needed, just for consistency
+    // Use fetch directly for DELETE since we have apiGet but not apiDelete
+    const res = await fetch(`${API_BASE}/api/categories/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+
+    renderAdminCategoriesList();
+  } catch (e) {
+    alert(`Ошибка: ${e.message}`);
+  }
 }
 
 function exportJSON() {
