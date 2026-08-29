@@ -2,6 +2,10 @@
 # ZholRules — Git Ignore
 # ============================================
 
+# --- Project files ---
+TODO.md
+*.todo
+
 # --- Python ---
 __pycache__/
 *.py[cod]

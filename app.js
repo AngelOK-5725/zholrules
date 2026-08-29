@@ -8,7 +8,9 @@
 // ============================================
 // CONFIG
 // ============================================
-const OWNER_TELEGRAM_ID = 1323250813;
+const API_BASE = window.location.hostname === 'localhost'
+  ? 'http://localhost:5000'
+  : 'https://zholrules.onrender.com';
 const QUESTIONS_PER_MIX = 20;
 const EXAM_QUESTIONS = 40;
 const EXAM_TIME_MINUTES = 40;
@@ -73,14 +75,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     state.user.id = 12345678;
   }
 
-  // Check admin
-  if (OWNER_TELEGRAM_ID && state.user.id === OWNER_TELEGRAM_ID) {
-    state.user.isAdmin = true;
-    document.getElementById('admin-tab-btn').style.display = 'flex';
-  }
-
   // Load saved state
   loadState();
+
+  // Fetch user profile from backend (includes admin check)
+  await fetchUserProfile();
 
   // Load questions
   await loadQuestions();
@@ -103,6 +102,63 @@ async function loadQuestions() {
     console.error('Failed to load questions:', e);
     // Fallback: use embedded questions
     questionsData = { categories: [], questions: [] };
+  }
+}
+
+// ============================================
+// API HELPERS
+// ============================================
+async function apiGet(path) {
+  const res = await fetch(`${API_BASE}${path}`);
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+async function apiPost(path, body) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+// ============================================
+// USER PROFILE (from backend)
+// ============================================
+async function fetchUserProfile() {
+  try {
+    const data = await apiGet('/api/user');
+    if (data.user) {
+      state.user.isAdmin = data.user.is_admin || false;
+      state.user.name = data.user.name || state.user.name;
+      state.user.goal = data.user.goal || state.user.goal;
+    }
+    if (data.stats) {
+      state.stats.totalAnswered = data.stats.total_answered || 0;
+      state.stats.totalCorrect = data.stats.total_correct || 0;
+      state.stats.streak = data.stats.streak || 0;
+      state.stats.stars = data.stats.stars || 0;
+      state.stats.lives = data.stats.lives ?? MAX_DAILY_LIVES;
+      state.stats.gameHighScore = data.stats.game_high_score || 0;
+    }
+    if (data.category_stats) {
+      state.categoryStats = {};
+      data.category_stats.forEach(cs => {
+        state.categoryStats[cs.category_id] = { total: cs.answered, correct: cs.correct };
+      });
+    }
+    if (data.errors) {
+      state.errors = data.errors;
+    }
+    // Show admin tab if user is admin
+    if (state.user.isAdmin) {
+      document.getElementById('admin-tab-btn').style.display = 'flex';
+    }
+  } catch (e) {
+    console.warn('Could not fetch user profile from API:', e);
+    // Fallback: use localStorage data
   }
 }
 
@@ -210,11 +266,22 @@ function selectGoal(goal) {
   setTimeout(() => nextOnboardingStep(), 300);
 }
 
-function completeOnboarding() {
+async function completeOnboarding() {
   const examDate = document.getElementById('exam-date').value;
   state.user.examDate = examDate;
   state.onboardingDone = true;
   saveState();
+
+  // Sync with backend
+  try {
+    await apiPost('/api/user', {
+      name: state.user.name,
+      goal: state.user.goal,
+      exam_date: examDate,
+    });
+  } catch (e) {
+    console.warn('Could not sync onboarding to backend:', e);
+  }
 
   document.getElementById('onboarding-screen').classList.remove('active');
   showMainApp();
