@@ -7,7 +7,19 @@
 
 ## ✅ Выполнено
 
-### Базовая инфраструктура
+### Бэкенд и Окружение
+- [x] Python virtual environment (`venv/`)
+- [x] `requirements.txt` — Flask, SQLAlchemy, python-telegram-bot, gunicorn, loguru
+- [x] `.env` / `.env.example` — шаблон секретов (BOT_TOKEN, OWNER_ID, DB, Cloudinary, Payments)
+- [x] `server.py` — Flask API: вопросы, пользователи, статистика, админка, лидерборд
+- [x] Валидация Telegram WebApp initData (HMAC)
+- [x] SQLite база данных (User, Stats, Questions, Errors, Categories)
+- [x] CRUD API для вопросов (создание, удаление, экспорт, импорт)
+- [x] API ответов с обновлением статистики и ошибок
+- [x] API лидерборда мини-игры
+- [x] `run.bat` / `run.sh` — скрипты запуска
+
+### Базовая инфраструктура (фронтенд)
 - [x] Структура проекта (`index.html`, `style.css`, `app.js`)
 - [x] Telegram WebApp SDK интеграция (`telegram-web-app.js`)
 - [x] Mobile-first responsive верстка
@@ -92,8 +104,7 @@
 
 ### Приоритет: ВАЖНО (для полноты продукта)
 
-- [ ] **Хранение вопросов на сервере** — сейчас вопросы хранятся в JSON + localStorage; нужен бэкенд (SQLite / JSON-файл на сервере)
-- [ ] **Backend API** — CRUD для вопросов, статистика пользователей
+- [ ] **Подключить фронтенд к бэкенду** — заменить localStorage на API-запросы к server.py
 - [ ] **Синхронизация прогресса** — привязать статистику к Telegram user ID на сервере
 - [ ] **Реальная интеграция Telegram Payments** — серверная генерация invoice через Bot API
 - [ ] **Хранение медиафайлов** — интеграция с Cloudinary / S3 для загрузки фото/видео админом

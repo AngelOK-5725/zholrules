@@ -1,29 +1,72 @@
-# Dependencies
-node_modules/
-package-lock.json
+# ============================================
+# ZholRules — Git Ignore
+# ============================================
 
-# Environment
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+eggs/
+*.whl
+pip-log.txt
+pip-delete-this-directory.txt
+
+# --- Virtual Environment ---
+venv/
+.venv/
+ENV/
+env/
+
+# --- Environment / Secrets ---
 .env
 .env.local
 .env.*.local
+!.env.example
 
-# IDE
+# --- Database ---
+*.db
+*.sqlite3
+
+# --- Media Uploads ---
+uploads/
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.mp4
+*.webm
+
+# --- Logs ---
+logs/
+*.log
+
+# --- IDE ---
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# OS
+# --- OS ---
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Logs
-*.log
+# --- Node (for future use) ---
+node_modules/
+package-lock.json
 
-# Build
+# --- Telegram WebApp (minified builds) ---
 dist/
 build/
 
-# Local storage data (user-specific)
-*.localstorage
+# --- Test reports ---
+htmlcov/
+.coverage
+coverage.xml
+.pytest_cache/
