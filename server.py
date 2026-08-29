@@ -165,10 +165,15 @@ def validate_telegram_webapp(init_data: str, bot_token: str) -> dict:
         data = dict(param.split('=', 1) for param in init_data.split('&'))
         received_hash = data.pop('hash', '')
 
+        logger.info(f'[VALIDATE] Keys: {list(data.keys())}')
+        logger.info(f'[VALIDATE] received_hash: {received_hash[:20]}...')
+        logger.info(f'[VALIDATE] bot_token length: {len(bot_token)}')
+
         # Build data check string
         data_check_string = '\n'.join(
             f'{k}={v}' for k, v in sorted(data.items())
         )
+        logger.info(f'[VALIDATE] data_check_string: {data_check_string[:100]}...')
 
         # HMAC validation
         secret_key = hmac.new(
@@ -178,16 +183,24 @@ def validate_telegram_webapp(init_data: str, bot_token: str) -> dict:
         computed_hash = hmac.new(
             secret_key, data_check_string.encode(), hashlib.sha256
         ).hexdigest()
+        logger.info(f'[VALIDATE] computed_hash: {computed_hash[:20]}...')
+        logger.info(f'[VALIDATE] match: {computed_hash == received_hash}')
 
         if computed_hash != received_hash:
+            logger.error('[VALIDATE] HASH MISMATCH — wrong bot token?')
             return None
 
-        # Check auth_date (24 hour window — Mini App stays open long)
+        # Check auth_date (24 hour window)
         auth_date = int(data.get('auth_date', 0))
-        if time.time() - auth_date > 86400:
+        age = time.time() - auth_date
+        logger.info(f'[VALIDATE] auth_date age: {age:.0f}s')
+        if age > 86400:
+            logger.error('[VALIDATE] auth_date expired')
             return None
 
-        return json.loads(data.get('user', '{}'))
+        user = json.loads(data.get('user', '{}'))
+        logger.info(f'[VALIDATE] OK — user_id={user.get("id")} name={user.get("first_name")}')
+        return user
     except Exception as e:
         logger.error(f'Telegram validation error: {e}')
         return None
