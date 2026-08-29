@@ -31,7 +31,8 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///zho
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # CORS
-CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'http://localhost:5000').split(',')
+DEFAULT_ORIGINS = 'http://localhost:5000,https://angelok-5725.github.io'
+CORS_ORIGINS = os.getenv('CORS_ORIGINS', DEFAULT_ORIGINS).split(',')
 CORS(app, origins=CORS_ORIGINS)
 
 # Database — fallback to SQLite if DATABASE_URL not set
