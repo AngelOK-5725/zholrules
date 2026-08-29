@@ -31,9 +31,8 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///zholrules.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# CORS
-DEFAULT_ORIGINS = 'http://localhost:5000,https://angelok-5725.github.io'
-CORS_ORIGINS = os.getenv('CORS_ORIGINS', DEFAULT_ORIGINS).split(',')
+# CORS — only allow own domains
+CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'https://angelok-5725.github.io').split(',')
 CORS(app, origins=CORS_ORIGINS)
 
 # Database — Neon PostgreSQL or SQLite fallback
@@ -207,15 +206,11 @@ def validate_telegram_webapp(init_data: str, bot_token: str) -> dict:
         # URL-decode ALL values (dec_lf_sig variant from debug tests)
         data = {k: unquote(v) for k, v in raw_data.items()}
 
-        logger.info(f'[VALIDATE] Keys: {list(data.keys())}')
-        logger.info(f'[VALIDATE] received_hash: {received_hash[:20]}...')
-        logger.info(f'[VALIDATE] bot_token length: {len(bot_token)}')
 
         # Build data check string: sorted, \n separated, URL-decoded values
         data_check_string = '\n'.join(
             f'{k}={v}' for k, v in sorted(data.items())
         )
-        logger.info(f'[VALIDATE] data_check_string: {data_check_string[:120]}...')
 
         # HMAC validation
         secret_key = hmac.new(
@@ -225,23 +220,17 @@ def validate_telegram_webapp(init_data: str, bot_token: str) -> dict:
         computed_hash = hmac.new(
             secret_key, data_check_string.encode(), hashlib.sha256
         ).hexdigest()
-        logger.info(f'[VALIDATE] computed_hash: {computed_hash[:20]}...')
-        logger.info(f'[VALIDATE] match: {computed_hash == received_hash}')
 
         if computed_hash != received_hash:
-            logger.error('[VALIDATE] HASH MISMATCH — wrong bot token?')
             return None
 
         # Check auth_date (24 hour window)
         auth_date = int(data.get('auth_date', 0))
         age = time.time() - auth_date
-        logger.info(f'[VALIDATE] auth_date age: {age:.0f}s')
         if age > 86400:
-            logger.error('[VALIDATE] auth_date expired')
             return None
 
         user = json.loads(data.get('user', '{}'))
-        logger.info(f'[VALIDATE] OK — user_id={user.get("id")} name={user.get("first_name")}')
         return user
     except Exception as e:
         logger.error(f'Telegram validation error: {e}')
@@ -256,27 +245,23 @@ def require_auth(f):
         bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
         owner_id = os.getenv('OWNER_TELEGRAM_ID', 'NOT_SET')
 
-        logger.info(f'[AUTH] bot_token={bool(bot_token)} owner_id={owner_id} auth_header={auth_header[:30] if auth_header else "EMPTY"}')
 
         if not bot_token:
             # Dev mode — skip auth
-            logger.warning('[AUTH] No BOT_TOKEN — dev mode, using fake user 12345678')
             request.tg_user = {'id': 12345678, 'first_name': 'Dev'}
             return f(*args, **kwargs)
 
         if not auth_header.startswith('tma '):
-            logger.warning(f'[AUTH] No tma header. Got: {auth_header[:50]}')
             return jsonify({'error': 'Unauthorized — open via Telegram bot'}), 401
 
         init_data = auth_header[4:]
         user_data = validate_telegram_webapp(init_data, bot_token)
 
         if not user_data:
-            logger.error('[AUTH] Telegram validation FAILED')
             return jsonify({'error': 'Invalid signature'}), 401
 
-        logger.info(f'[AUTH] OK — user_id={user_data.get("id")} name={user_data.get("first_name")}')
         request.tg_user = user_data
+        logger.info(f'Auth OK: user_id={user_data.get("id")}')
         return f(*args, **kwargs)
     return decorated
 
