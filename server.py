@@ -16,6 +16,7 @@ from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
 from loguru import logger
+from urllib.parse import unquote
 
 # ============================================
 # LOAD ENV
@@ -159,22 +160,32 @@ class Question(db.Model):
 # ============================================
 # TELEGRAM WEBAPP VALIDATION
 # ============================================
-def validate_telegram_webapp(init_data: str, bot_token: str) -> dict:
-    """Validate Telegram WebApp initData and return user data."""
-    try:
-        data = dict(param.split('=', 1) for param in init_data.split('&'))
-        received_hash = data.pop('hash', '')
-        data.pop('signature', None)  # signature is NOT part of HMAC check
 
-        logger.info(f'[VALIDATE] Keys (after pop): {list(data.keys())}')
+def validate_telegram_webapp(init_data: str, bot_token: str) -> dict:
+    """Validate Telegram WebApp initData and return user data.
+    
+    Per Telegram spec (confirmed by debug tests):
+    - secret_key = HMAC_SHA256(key=b'WebAppData', msg=bot_token)
+    - data_check_string = sorted key=UNQUOTED_value with \n separator
+    - ALL fields included (including signature), only hash is removed
+    """
+    try:
+        raw_data = dict(param.split('=', 1) for param in init_data.split('&'))
+        received_hash = raw_data.pop('hash', '')
+        # Keep signature — it IS part of data_check_string
+
+        # URL-decode ALL values (dec_lf_sig variant from debug tests)
+        data = {k: unquote(v) for k, v in raw_data.items()}
+
+        logger.info(f'[VALIDATE] Keys: {list(data.keys())}')
         logger.info(f'[VALIDATE] received_hash: {received_hash[:20]}...')
         logger.info(f'[VALIDATE] bot_token length: {len(bot_token)}')
 
-        # Build data check string (exclude hash and signature)
+        # Build data check string: sorted, \n separated, URL-decoded values
         data_check_string = '\n'.join(
             f'{k}={v}' for k, v in sorted(data.items())
         )
-        logger.info(f'[VALIDATE] data_check_string: {data_check_string[:100]}...')
+        logger.info(f'[VALIDATE] data_check_string: {data_check_string[:120]}...')
 
         # HMAC validation
         secret_key = hmac.new(
