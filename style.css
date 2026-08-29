@@ -78,26 +78,20 @@
 
 html {
   font-size: 16px;
-  overflow-x: hidden;
-  /* iOS safe area support */
   -webkit-text-size-adjust: 100%;
   -ms-text-size-adjust: 100%;
+  scroll-behavior: smooth;
 }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   background: var(--tg-theme-bg-color);
   color: var(--tg-theme-text-color);
-  /* iOS 100vh fix: use dvh with fallback */
   min-height: 100vh;
-  min-height: 100dvh;
-  overflow-x: hidden;
-  overflow-y: auto;
-  /* Prevent iOS rubber-band scrolling */
+  overflow: visible;
   -webkit-overflow-scrolling: touch;
   padding-bottom: calc(var(--nav-height) + var(--safe-bottom));
   transition: background 0.3s, color 0.3s;
-  /* Prevent text selection on UI elements */
   -webkit-user-select: none;
   user-select: none;
 }
@@ -111,14 +105,12 @@ input, textarea, .quiz-question-text {
 /* --- Screens --- */
 .screen {
   display: none;
-  /* iOS 100vh fix */
-  min-height: 100vh;
-  min-height: 100dvh;
 }
 
 .screen.active {
   display: flex;
   flex-direction: column;
+  min-height: 100vh;
 }
 
 /* --- Splash Screen --- */
@@ -1570,10 +1562,6 @@ select.input-field {
   padding-right: 40px;
 }
 
-/* --- iOS: Prevent bounce scroll on body --- */
-body {
-  overscroll-behavior-y: contain;
-}
 
 /* --- iOS: Fix safe area on quiz screen --- */
 #quiz-screen {
@@ -1599,12 +1587,7 @@ body {
   max-height: calc(100dvh - var(--safe-top));
 }
 
-/* --- iOS: Prevent pull-to-refresh --- */
-.tab-content,
-.quiz-content,
-.game-container {
-  overscroll-behavior: contain;
-}
+
 
 /* --- iOS: Fix header safe area --- */
 .app-header {
@@ -1631,12 +1614,6 @@ body {
 /* --- iOS: Fix date input --- */
 input[type="date"] {
   min-height: 48px;
-}
-
-/* --- Both platforms: Smooth scrolling --- */
-html {
-  scroll-behavior: smooth;
-  -webkit-overflow-scrolling: touch;
 }
 
 /* --- iOS: Fix quiz result scroll --- */
