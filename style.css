@@ -79,22 +79,40 @@
 html {
   font-size: 16px;
   overflow-x: hidden;
+  /* iOS safe area support */
+  -webkit-text-size-adjust: 100%;
+  -ms-text-size-adjust: 100%;
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   background: var(--tg-theme-bg-color);
   color: var(--tg-theme-text-color);
+  /* iOS 100vh fix: use dvh with fallback */
   min-height: 100vh;
+  min-height: 100dvh;
   overflow-x: hidden;
+  /* Prevent iOS rubber-band scrolling */
+  -webkit-overflow-scrolling: touch;
   padding-bottom: calc(var(--nav-height) + var(--safe-bottom));
   transition: background 0.3s, color 0.3s;
+  /* Prevent text selection on UI elements */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Allow text selection in inputs */
+input, textarea, .quiz-question-text {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 /* --- Screens --- */
 .screen {
   display: none;
+  /* iOS 100vh fix */
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .screen.active {
@@ -365,6 +383,12 @@ textarea.input-field {
   cursor: pointer;
   transition: all 0.2s;
   width: 100%;
+  /* iOS: minimum touch target 44px */
+  min-height: 48px;
+  /* Prevent iOS callout menu on long press */
+  -webkit-touch-callout: none;
+  /* Smooth tap on mobile */
+  -webkit-tap-highlight-color: transparent;
 }
 
 .btn-primary {
@@ -439,6 +463,9 @@ textarea.input-field {
   cursor: pointer;
   transition: all 0.2s;
   border: 2px solid transparent;
+  /* Touch targets */
+  min-height: 100px;
+  -webkit-touch-callout: none;
 }
 
 .mode-card:hover {
@@ -483,6 +510,8 @@ textarea.input-field {
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.2s;
+  min-height: 52px;
+  -webkit-touch-callout: none;
 }
 
 .category-item:hover {
@@ -628,6 +657,9 @@ textarea.input-field {
   cursor: pointer;
   transition: all 0.15s;
   text-align: center;
+  /* Touch targets */
+  min-height: 52px;
+  -webkit-touch-callout: none;
 }
 
 .game-option-btn:active {
@@ -1062,6 +1094,9 @@ textarea.input-field {
   transition: all 0.2s;
   font-size: 15px;
   background: var(--tg-theme-bg-color);
+  /* iOS: minimum touch target */
+  min-height: 52px;
+  -webkit-touch-callout: none;
 }
 
 .quiz-option:active {
@@ -1501,4 +1536,156 @@ textarea.input-field {
 ::-webkit-scrollbar-thumb {
   background: var(--tg-theme-hint-color);
   border-radius: 2px;
+}
+
+/* ============================================
+   CROSS-PLATFORM FIXES (iOS / Android)
+   ============================================ */
+
+/* --- iOS: Prevent zoom on input focus --- */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="date"],
+input[type="tel"],
+input[type="url"],
+textarea,
+select {
+  font-size: 16px !important;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+}
+
+/* --- iOS: Fix input styling --- */
+select.input-field {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23999' stroke-width='2' fill='none'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 16px center;
+  padding-right: 40px;
+}
+
+/* --- iOS: Prevent bounce scroll on body --- */
+body {
+  overscroll-behavior-y: none;
+}
+
+/* --- iOS: Fix safe area on quiz screen --- */
+#quiz-screen {
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
+}
+
+/* --- iOS: Fix bottom nav safe area --- */
+.bottom-nav {
+  padding-top: 0;
+  padding-bottom: var(--safe-bottom);
+  /* iOS: extend into safe area */
+  padding-bottom: calc(8px + var(--safe-bottom));
+}
+
+/* --- iOS: Fix modal safe area --- */
+.modal {
+  padding-top: var(--safe-top);
+}
+
+.modal-content {
+  max-height: calc(100vh - var(--safe-top));
+  max-height: calc(100dvh - var(--safe-top));
+}
+
+/* --- iOS: Prevent pull-to-refresh --- */
+.tab-content,
+.quiz-content,
+.game-container {
+  overscroll-behavior: contain;
+}
+
+/* --- iOS: Fix header safe area --- */
+.app-header {
+  padding-top: calc(var(--safe-top) + 12px);
+}
+
+.quiz-header {
+  padding-top: calc(var(--safe-top) + 12px);
+}
+
+/* --- Android: Material-style ripple effect --- */
+.mode-card:active,
+.category-item:active,
+.topic-item:active {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.dark-mode .mode-card:active,
+.dark-mode .category-item:active,
+.dark-mode .topic-item:active {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* --- iOS: Fix date input --- */
+input[type="date"] {
+  min-height: 48px;
+}
+
+/* --- Both platforms: Smooth scrolling --- */
+html {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* --- iOS: Fix quiz result scroll --- */
+.quiz-result {
+  min-height: calc(100vh - 120px);
+  min-height: calc(100dvh - 120px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* --- Android: Chrome address bar hide --- */
+@supports (height: 100dvh) {
+  .screen.active {
+    min-height: 100dvh;
+  }
+}
+
+/* --- iOS: Prevent text size adjust --- */
+* {
+  -webkit-text-size-adjust: 100%;
+  -ms-text-size-adjust: 100%;
+}
+
+/* --- iOS: Fix keyboard push layout --- */
+@supports (padding: env(safe-area-inset-bottom)) {
+  .quiz-footer {
+    padding-bottom: calc(12px + var(--safe-bottom));
+  }
+}
+
+/* --- Both: Touch feedback --- */
+.nav-btn:active {
+  transform: scale(0.92);
+  transition: transform 0.1s;
+}
+
+.goal-card:active {
+  transform: scale(0.97);
+  transition: transform 0.1s;
+}
+
+/* --- iOS: Fix splash safe area --- */
+#splash-screen {
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
+}
+
+/* --- iOS: Fix onboarding safe area --- */
+#onboarding-screen {
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
 }
