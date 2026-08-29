@@ -7,10 +7,21 @@
 
 ## ✅ Выполнено
 
+### Деплой и Инфраструктура
+- [x] **GitHub Pages** — фронтенд задеплоен на `angelok-5725.github.io/zholrules/`
+- [x] **Render.com** — бэкенд API работает на `zholrules.onrender.com`
+- [x] **GitHub Actions** — автоматический деплой фронта при пуше в main
+- [x] **Cross-platform** — iOS Safari + Android Chrome совместимость
+  - iOS 100vh fix (dvh с fallback)
+  - Safe area insets (notch, dynamic island)
+  - Touch targets min 48-52px
+  - WebKit-префиксы
+  - Предотвращение зума на iOS
+
 ### Бэкенд и Окружение
 - [x] Python virtual environment (`venv/`)
 - [x] `requirements.txt` — Flask, SQLAlchemy, python-telegram-bot, gunicorn, loguru
-- [x] `.env` / `.env.example` — шаблон секретов (BOT_TOKEN, OWNER_ID, DB, Cloudinary, Payments)
+- [x] `.env` — секреты (BOT_TOKEN, OWNER_ID, DB, Cloudinary, Payments)
 - [x] `server.py` — Flask API: вопросы, пользователи, статистика, админка, лидерборд
 - [x] Валидация Telegram WebApp initData (HMAC)
 - [x] SQLite база данных (User, Stats, Questions, Errors, Categories)
@@ -18,6 +29,7 @@
 - [x] API ответов с обновлением статистики и ошибок
 - [x] API лидерборда мини-игры
 - [x] `run.bat` / `run.sh` — скрипты запуска
+- [x] Fallback на SQLite когда DATABASE_URL не задан
 
 ### Базовая инфраструктура (фронтенд)
 - [x] Структура проекта (`index.html`, `style.css`, `app.js`)
@@ -96,15 +108,17 @@
 
 ### Приоритет: КРИТИЧНО (для запуска)
 
-- [ ] **Деплой на VPS/хостинг** — настроить HTTPS и раздать статику
+- [x] **Деплой фронта** — GitHub Pages ✅
+- [x] **Деплой бэкенда** — Render.com ✅
 - [ ] **Telegram Bot** — создать через @BotFather, привязать WebApp URL
 - [ ] **OWNER_TELEGRAM_ID** — вписать реальный Telegram ID владельца
 - [ ] **Тестирование на реальном устройстве** — проверить в Telegram на Android/iOS
-- [ ] **Исправить баг: экзамен завершается при >8 ошибок** — `endQuiz(false)` показывает экран с результатами, но не обновляет UI корректно
+- [x] **Кросс-платформенность** — iOS/Android совместимость ✅
 
 ### Приоритет: ВАЖНО (для полноты продукта)
 
-- [ ] **Подключить фронтенд к бэкенду** — заменить localStorage на API-запросы к server.py
+- [ ] **Подключить фронтенд к бэкенду** — заменить localStorage на API-запросы к Render
+- [ ] **Neon PostgreSQL** — подключить когда понадобится настоящая БД
 - [ ] **Синхронизация прогресса** — привязать статистику к Telegram user ID на сервере
 - [ ] **Реальная интеграция Telegram Payments** — серверная генерация invoice через Bot API
 - [ ] **Хранение медиафайлов** — интеграция с Cloudinary / S3 для загрузки фото/видео админом
@@ -115,24 +129,20 @@
 
 ## 📋 План до эталонно-готовой системы
 
-### Фаза 1: Бэкенд и Данные
-- [ ] **Node.js / Python сервер** — Express/Fastify или Flask/FastAPI
-- [ ] **База данных (SQLite/PostgreSQL)** — таблицы:
-  - `users` (tg_id, name, goal, exam_date, created_at)
-  - `questions` (id, category, question, media_type, media_url, options, correct, explanation, difficulty)
-  - `stats` (user_id, total_answered, total_correct, streak, last_active)
-  - `category_stats` (user_id, category_id, answered, correct)
-  - `errors` (user_id, question_id)
-- [ ] **REST API эндпоинты:**
-  - `GET /api/questions` — список вопросов (с фильтрацией по категории)
-  - `POST /api/questions` — создание вопроса (только admin)
-  - `DELETE /api/questions/:id` — удаление вопроса (только admin)
-  - `GET /api/user/:tg_id/stats` — статистика пользователя
-  - `POST /api/user/:tg_id/answer` — сохранение ответа
-  - `POST /api/user/:tg_id/purchase` — обработка покупки Stars
-  - `GET /api/leaderboard` — лидерборд мини-игры
-- [ ] **Валидация initData** — проверка подписи Telegram WebApp на сервере
-- [ ] **Middleware авторизации** — проверка admin по `tg_id`
+### Фаза 1: Бэкенд и Данные ✅
+- [x] **Python Flask сервер** — server.py с gunicorn
+- [x] **SQLite база данных** — таблицы User, Stats, Questions, Errors, Categories
+- [x] **REST API эндпоинты:**
+  - `GET /api/questions` ✅
+  - `POST /api/questions` ✅
+  - `DELETE /api/questions/:id` ✅
+  - `GET /api/user` ✅
+  - `POST /api/answer` ✅
+  - `GET /api/leaderboard` ✅
+  - `GET /api/health` ✅
+- [x] **Валидация initData** — HMAC-проверка Telegram подписи
+- [x] **Middleware авторизации** — проверка admin по `tg_id`
+- [ ] **PostgreSQL (Neon)** — подключить когда понадобится масштабирование
 
 ### Фаза 2: Фронтенд Улучшения
 - [ ] **Реальные медиафайлы** — загрузка и отображение фото/видео в вопросах
@@ -199,4 +209,4 @@
 
 ---
 
-*Последнее обновление: Август 2026*
+*Последнее обновление: 29 Августа 2026*
