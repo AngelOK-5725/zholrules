@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>ZholRules — ПДД РК</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <!-- Splash Screen -->
+  <div id="splash-screen" class="screen active">
+    <div class="splash-content">
+      <div class="splash-logo">🚗</div>
+      <h1 class="splash-title">ZholRules</h1>
+      <p class="splash-subtitle">ПДД Казахстан</p>
+      <div class="splash-loader">
+        <div class="loader-bar"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Onboarding Screen -->
+  <div id="onboarding-screen" class="screen">
+    <div class="onboarding-content">
+      <div class="onboarding-step active" data-step="1">
+        <div class="onboarding-emoji">👋</div>
+        <h2>Привет, <span id="user-name">друг</span>!</h2>
+        <p>Добро пожаловать в ZholRules — ваш умный помощник для подготовки к экзамену по ПДД РК</p>
+        <button class="btn btn-primary" onclick="nextOnboardingStep()">Начать</button>
+      </div>
+      <div class="onboarding-step" data-step="2">
+        <div class="onboarding-emoji">🎯</div>
+        <h2>Какая ваша цель?</h2>
+        <div class="goal-options">
+          <button class="goal-card" onclick="selectGoal('newbie')">
+            <span class="goal-icon">🌱</span>
+            <span class="goal-title">Новичок</span>
+            <span class="goal-desc">Начинаю учить ПДД с нуля</span>
+          </button>
+          <button class="goal-card" onclick="selectGoal('refresh')">
+            <span class="goal-icon">🔄</span>
+            <span class="goal-title">Освежить</span>
+            <span class="goal-desc">Хочу повторить правила</span>
+          </button>
+          <button class="goal-card" onclick="selectGoal('exam')">
+            <span class="goal-icon">📋</span>
+            <span class="goal-title">Сдаю экзамен</span>
+            <span class="goal-desc">Готовлюсь к сдаче в СпецЦОНе</span>
+          </button>
+        </div>
+      </div>
+      <div class="onboarding-step" data-step="3">
+        <div class="onboarding-emoji">📅</div>
+        <h2>Дата экзамена (необязательно)</h2>
+        <p>Укажите дату экзамена для напоминаний</p>
+        <input type="date" id="exam-date" class="input-field" />
+        <button class="btn btn-primary" onclick="completeOnboarding()" style="margin-top: 20px;">Продолжить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main App Container -->
+  <div id="app" class="screen">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <h1 class="header-title">ZholRules</h1>
+      </div>
+      <div class="header-right">
+        <span class="streak-badge" id="streak-badge">🔥 0</span>
+        <span class="lives-badge" id="lives-badge">❤️ 3</span>
+      </div>
+    </header>
+
+    <!-- Tab: Home -->
+    <div id="tab-home" class="tab-content active">
+      <!-- Daily Progress Card -->
+      <div class="progress-card">
+        <div class="progress-header">
+          <h3>Дневной прогресс</h3>
+          <span class="streak-text">🔥 <span id="daily-streak">0</span> дней подряд</span>
+        </div>
+        <div class="progress-bar-container">
+          <div class="progress-bar" id="daily-progress" style="width: 0%"></div>
+        </div>
+        <p class="progress-text" id="daily-progress-text">0 / 10 вопросов сегодня</p>
+      </div>
+
+      <!-- Quick Start Button -->
+      <button class="btn btn-primary btn-large" onclick="startExam()">
+        <span class="btn-icon">⚡</span>
+        Быстрый старт — Экзамен
+      </button>
+
+      <!-- Mode Grid -->
+      <h3 class="section-title">Режимы обучения</h3>
+      <div class="mode-grid">
+        <div class="mode-card" onclick="startQuiz('random')">
+          <div class="mode-icon">🎲</div>
+          <div class="mode-title">Случайный микс</div>
+          <div class="mode-desc">20 вопросов</div>
+        </div>
+        <div class="mode-card" onclick="showTopicPicker()">
+          <div class="mode-icon">📚</div>
+          <div class="mode-title">По темам</div>
+          <div class="mode-desc">Выбор категории</div>
+        </div>
+        <div class="mode-card" onclick="startExam()">
+          <div class="mode-icon">🏛️</div>
+          <div class="mode-title">Как в СпецЦОНе</div>
+          <div class="mode-desc">40 вопросов, 40 мин</div>
+        </div>
+        <div class="mode-card" onclick="startQuiz('errors')">
+          <div class="mode-icon">📝</div>
+          <div class="mode-title">Мои ошибки</div>
+          <div class="mode-desc" id="errors-count">0 вопросов</div>
+        </div>
+      </div>
+
+      <!-- Categories -->
+      <h3 class="section-title">Категории</h3>
+      <div id="categories-list" class="categories-list">
+        <!-- Filled by JS -->
+      </div>
+    </div>
+
+    <!-- Tab: Mini-Game -->
+    <div id="tab-game" class="tab-content">
+      <div class="game-container">
+        <div class="game-header">
+          <div class="game-timer" id="game-timer">⏱️ 60</div>
+          <div class="game-score">🏆 <span id="game-score">0</span></div>
+          <div class="game-combo" id="game-combo" style="display:none;">x1</div>
+        </div>
+        <div class="game-area" id="game-area">
+          <div class="game-placeholder">
+            <div class="game-placeholder-icon">🏎️</div>
+            <h3>Дорожный Спринт</h3>
+            <p>60 секунд быстрых вопросов. Зарабатывай комбо за правильные ответы!</p>
+            <button class="btn btn-primary" onclick="startMiniGame()">Старт!</button>
+          </div>
+          <div class="game-question" id="game-question" style="display:none;">
+            <div class="game-sign" id="game-sign-text"></div>
+            <div class="game-options" id="game-options">
+              <!-- Filled by JS -->
+            </div>
+          </div>
+        </div>
+        <div class="game-result" id="game-result" style="display:none;">
+          <div class="game-result-emoji">🏁</div>
+          <h2>Гонка завершена!</h2>
+          <p>Очки: <span id="final-score">0</span></p>
+          <p>Верных ответов: <span id="correct-answers">0</span> / <span id="total-answers">0</span></p>
+          <p>Максимальное комбо: <span id="max-combo">0</span>x</p>
+          <button class="btn btn-primary" onclick="resetMiniGame()">Играть снова</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Profile -->
+    <div id="tab-profile" class="tab-content">
+      <div class="profile-header">
+        <div class="avatar" id="user-avatar">👤</div>
+        <h2 id="profile-name">Пользователь</h2>
+        <p id="profile-status">🌱 Новичок</p>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="stat-total">0</div>
+          <div class="stat-label">Всего вопросов</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-correct">0%</div>
+          <div class="stat-label">Точность</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-streak">0</div>
+          <div class="stat-label">🔥 Стрик дней</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-stars">0</div>
+          <div class="stat-label">⭐ Stars</div>
+        </div>
+      </div>
+
+      <div class="profile-section">
+        <h3>Прогресс по категориям</h3>
+        <div id="category-progress">
+          <!-- Filled by JS -->
+        </div>
+      </div>
+
+      <div class="profile-section">
+        <h3>Настройки</h3>
+        <div class="settings-list">
+          <div class="setting-item">
+            <span>Тёмная тема</span>
+            <label class="switch">
+              <input type="checkbox" id="dark-mode-toggle" onchange="toggleDarkMode()">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="setting-item">
+            <span>Звуки</span>
+            <label class="switch">
+              <input type="checkbox" id="sounds-toggle" checked onchange="toggleSounds()">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Admin (visible only to owner) -->
+    <div id="tab-admin" class="tab-content">
+      <div class="admin-header">
+        <h2>⚙️ Панель управления</h2>
+        <p>Добавляйте и редактируйте вопросы</p>
+      </div>
+
+      <div class="admin-tabs">
+        <button class="admin-tab active" onclick="switchAdminTab('create')">Создать вопрос</button>
+        <button class="admin-tab" onclick="switchAdminTab('list')">Список вопросов</button>
+        <button class="admin-tab" onclick="switchAdminTab('export')">Экспорт JSON</button>
+      </div>
+
+      <!-- Create Question Form -->
+      <div id="admin-create" class="admin-panel active">
+        <div class="form-group">
+          <label>Категория</label>
+          <select id="admin-category" class="input-field">
+            <!-- Filled by JS -->
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Текст вопроса</label>
+          <textarea id="admin-question" class="input-field" placeholder="Введите текст вопроса..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>Тип контента</label>
+          <select id="admin-media-type" class="input-field">
+            <option value="none">Без медиа</option>
+            <option value="image">Фото</option>
+            <option value="video">Видео</option>
+          </select>
+        </div>
+        <div class="form-group" id="admin-media-group" style="display:none;">
+          <label>URL медиафайла</label>
+          <input type="text" id="admin-media-url" class="input-field" placeholder="https://...">
+        </div>
+        <div class="form-group">
+          <label>Варианты ответов (минимум 2)</label>
+          <div id="admin-options-list">
+            <div class="option-row">
+              <input type="text" class="input-field" placeholder="Вариант 1">
+              <label class="checkbox-label"><input type="checkbox"> ✓</label>
+            </div>
+            <div class="option-row">
+              <input type="text" class="input-field" placeholder="Вариант 2">
+              <label class="checkbox-label"><input type="checkbox"> ✓</label>
+            </div>
+          </div>
+          <button class="btn btn-secondary btn-small" onclick="addAdminOption()">+ Добавить вариант</button>
+        </div>
+        <div class="form-group">
+          <label>Тип выбора</label>
+          <select id="admin-choice-type" class="input-field">
+            <option value="single">Один правильный ответ</option>
+            <option value="multiple">Несколько правильных ответов</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Пояснение</label>
+          <textarea id="admin-explanation" class="input-field" placeholder="Объяснение правильного ответа..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>Сложность</label>
+          <select id="admin-difficulty" class="input-field">
+            <option value="easy">Лёгкий</option>
+            <option value="medium">Средний</option>
+            <option value="hard">Сложный</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="saveQuestion()">💾 Сохранить вопрос</button>
+      </div>
+
+      <!-- Question List -->
+      <div id="admin-list" class="admin-panel">
+        <div id="admin-questions-list">
+          <!-- Filled by JS -->
+        </div>
+      </div>
+
+      <!-- Export JSON -->
+      <div id="admin-export" class="admin-panel">
+        <div class="export-info">
+          <p>Экспортите данные вопросов в формате JSON для резервного копирования или переноса на другой сервер.</p>
+        </div>
+        <button class="btn btn-primary" onclick="exportJSON()">📥 Скачать JSON</button>
+        <div class="export-preview">
+          <textarea id="export-preview" class="input-field code-block" readonly></textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Navigation -->
+    <nav class="bottom-nav" id="bottom-nav">
+      <button class="nav-btn active" data-tab="home" onclick="switchTab('home')">
+        <span class="nav-icon">🏠</span>
+        <span class="nav-label">Главная</span>
+      </button>
+      <button class="nav-btn" data-tab="game" onclick="switchTab('game')">
+        <span class="nav-icon">🎮</span>
+        <span class="nav-label">Мини-игра</span>
+      </button>
+      <button class="nav-btn" data-tab="profile" onclick="switchTab('profile')">
+        <span class="nav-icon">📊</span>
+        <span class="nav-label">Профиль</span>
+      </button>
+      <button class="nav-btn" data-tab="admin" id="admin-tab-btn" style="display:none;" onclick="switchTab('admin')">
+        <span class="nav-icon">⚙️</span>
+        <span class="nav-label">Управление</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- Quiz Screen (overlay) -->
+  <div id="quiz-screen" class="screen">
+    <div class="quiz-header">
+      <button class="btn-back" onclick="exitQuiz()">✕</button>
+      <div class="quiz-progress-bar">
+        <div class="quiz-progress" id="quiz-progress" style="width: 0%"></div>
+      </div>
+      <span class="quiz-counter" id="quiz-counter">1 / 20</span>
+    </div>
+
+    <div class="quiz-timer" id="quiz-timer" style="display:none;">
+      <span class="timer-icon">⏱️</span>
+      <span id="timer-display">40:00</span>
+    </div>
+
+    <div class="quiz-content">
+      <div class="quiz-question" id="quiz-question">
+        <div class="quiz-question-text" id="quiz-question-text"></div>
+        <div class="quiz-media" id="quiz-media"></div>
+      </div>
+      <div class="quiz-options" id="quiz-options">
+        <!-- Filled by JS -->
+      </div>
+      <div class="quiz-explanation" id="quiz-explanation" style="display:none;">
+        <div class="explanation-card">
+          <h4>📖 Разбор</h4>
+          <p id="explanation-text"></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="quiz-footer" id="quiz-footer">
+      <button class="btn btn-primary btn-large" id="next-btn" onclick="nextQuestion()" disabled>Далее →</button>
+    </div>
+
+    <!-- Exam result -->
+    <div class="quiz-result" id="quiz-result" style="display:none;">
+      <div class="result-emoji" id="result-emoji">🎉</div>
+      <h2 id="result-title">Результат</h2>
+      <div class="result-stats">
+        <div class="result-stat">
+          <span class="result-stat-value" id="result-correct">0</span>
+          <span class="result-stat-label">Правильных</span>
+        </div>
+        <div class="result-stat">
+          <span class="result-stat-value" id="result-wrong">0</span>
+          <span class="result-stat-label">Ошибок</span>
+        </div>
+        <div class="result-stat">
+          <span class="result-stat-value" id="result-percent">0%</span>
+          <span class="result-stat-label">Точность</span>
+        </div>
+      </div>
+      <div id="result-message" class="result-message"></div>
+      <div class="result-actions">
+        <button class="btn btn-primary" onclick="retryQuiz()">🔄 Повторить</button>
+        <button class="btn btn-secondary" onclick="exitQuiz()">🏠 На главную</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Topic Picker Modal -->
+  <div id="topic-modal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Выберите тему</h3>
+        <button class="modal-close" onclick="closeTopicModal()">✕</button>
+      </div>
+      <div class="topic-list" id="topic-list">
+        <!-- Filled by JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Payment Modal -->
+  <div id="payment-modal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>⭐ Telegram Stars</h3>
+        <button class="modal-close" onclick="closePaymentModal()">✕</button>
+      </div>
+      <div class="payment-options">
+        <div class="payment-card" onclick="buyProExam()">
+          <div class="payment-icon">🏛️</div>
+          <div class="payment-title">СпецЦОН Симулятор PRO</div>
+          <div class="payment-price">25 Stars</div>
+          <div class="payment-desc">Полная симуляция экзамена</div>
+        </div>
+        <div class="payment-card" onclick="buyLives()">
+          <div class="payment-icon">❤️</div>
+          <div class="payment-title">+3 Жизни</div>
+          <div class="payment-price">5 Stars</div>
+          <div class="payment-desc">Восстановить жизни</div>
+        </div>
+        <div class="payment-card" onclick="buyNoAds()">
+          <div class="payment-icon">🚫</div>
+          <div class="payment-title">Без рекламы</div>
+          <div class="payment-price">15 Stars</div>
+          <div class="payment-desc">Убрать рекламу навсегда</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
