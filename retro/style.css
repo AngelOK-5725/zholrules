@@ -1,0 +1,360 @@
+/* ============================================
+   AutoTest_KZ - Retro ASCII Terminal Theme
+   ============================================ */
+
+/* --- Reset --- */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+:root {
+  --tg-theme-bg-color: #1a1040;
+  --tg-theme-text-color: #e0e0e0;
+  --tg-theme-hint-color: #8888aa;
+  --tg-theme-button-color: #6C4AFF;
+  --tg-theme-button-text-color: #ffffff;
+  --tg-theme-secondary-bg-color: #251850;
+
+  --purple: #6C4AFF;
+  --purple-light: #8B6FFF;
+  --yellow: #F8B400;
+  --green: #00E676;
+  --red: #FF5252;
+  --cyan: #00E5FF;
+  --bg: #1a1040;
+  --bg-light: #251850;
+  --text: #e0e0e0;
+  --muted: #8888aa;
+}
+
+body {
+  font-family: 'Courier New', 'Consolas', 'Monaco', monospace;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+  font-size: 14px;
+  line-height: 1.4;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input, textarea, select {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* --- App Container --- */
+#app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- Screens --- */
+.screen {
+  display: none;
+  flex: 1;
+  padding: 8px;
+  padding-bottom: 80px;
+  overflow-y: auto;
+}
+
+.screen.active {
+  display: block;
+}
+
+/* --- ASCII Frame --- */
+.ascii-frame {
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.3;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.ascii-frame.small {
+  font-size: 12px;
+}
+
+/* --- Colors in ASCII --- */
+.section-title {
+  color: var(--purple);
+  font-weight: bold;
+}
+
+.stat-label {
+  color: var(--cyan);
+}
+
+.star-icon {
+  color: var(--yellow);
+}
+
+.fire {
+  color: var(--red);
+}
+
+.admin-badge {
+  color: var(--red);
+  font-weight: bold;
+  animation: blink 1s ease infinite;
+}
+
+.level {
+  color: var(--green);
+}
+
+.time {
+  color: var(--muted);
+}
+
+.motto {
+  color: var(--purple-light);
+  font-style: italic;
+}
+
+.book-tag {
+  color: var(--yellow);
+  font-weight: bold;
+}
+
+.vip-tag {
+  color: var(--yellow);
+  font-weight: bold;
+  text-shadow: 0 0 8px rgba(248, 180, 0, 0.5);
+}
+
+.cat-icon {
+  color: var(--purple);
+}
+
+.mode-icon {
+  color: var(--purple-light);
+}
+
+.clickable {
+  color: var(--cyan);
+  cursor: pointer;
+  text-decoration: underline;
+  transition: color 0.2s;
+}
+
+.clickable:hover {
+  color: var(--yellow);
+}
+
+.clickable:active {
+  color: var(--green);
+}
+
+.timer {
+  color: var(--red);
+  font-weight: bold;
+}
+
+.score {
+  color: var(--yellow);
+  font-weight: bold;
+}
+
+/* --- Progress Bars --- */
+.progress-bar {
+  color: var(--green);
+}
+
+.mini-bar {
+  color: var(--purple-light);
+}
+
+/* --- ASCII Buttons --- */
+.ascii-btn {
+  display: block;
+  width: 100%;
+  padding: 10px 16px;
+  margin: 6px 0;
+  background: var(--bg-light);
+  border: 1px solid var(--purple);
+  color: var(--purple-light);
+  font-family: 'Courier New', monospace;
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s;
+}
+
+.ascii-btn:hover {
+  background: var(--purple);
+  color: #fff;
+}
+
+.ascii-btn:active {
+  transform: scale(0.98);
+  background: var(--purple-light);
+}
+
+.ascii-btn.btn-start {
+  text-align: center;
+  font-size: 16px;
+  font-weight: bold;
+  border-color: var(--yellow);
+  color: var(--yellow);
+  margin-top: 12px;
+}
+
+.ascii-btn.btn-start:hover {
+  background: var(--yellow);
+  color: #000;
+}
+
+/* --- Bottom Navigation --- */
+.bottom-nav-ascii {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-around;
+  background: var(--bg);
+  border-top: 2px solid var(--purple);
+  padding: 6px 0;
+  padding-bottom: calc(6px + env(safe-area-inset-bottom));
+  z-index: 100;
+}
+
+.nav-ascii-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 12px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.2s;
+  min-width: 56px;
+}
+
+.nav-ascii-btn.active {
+  color: var(--purple);
+}
+
+.nav-ascii-btn:hover {
+  color: var(--purple-light);
+}
+
+.nav-icon {
+  font-size: 18px;
+  font-weight: bold;
+}
+
+.nav-label {
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+/* --- Forms --- */
+.ascii-input {
+  width: 100%;
+  padding: 8px;
+  background: var(--bg);
+  border: 1px solid var(--purple);
+  color: var(--text);
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  outline: none;
+  margin: 4px 0;
+}
+
+.ascii-input:focus {
+  border-color: var(--yellow);
+  box-shadow: 0 0 4px rgba(248, 180, 0, 0.3);
+}
+
+.ascii-select {
+  width: 100%;
+  padding: 8px;
+  background: var(--bg);
+  border: 1px solid var(--purple);
+  color: var(--text);
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  outline: none;
+  margin: 4px 0;
+  -webkit-appearance: none;
+}
+
+/* --- Topic Buttons --- */
+.topic-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* --- Animations --- */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes typeIn {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+/* --- Responsive --- */
+@media (max-width: 380px) {
+  .ascii-frame {
+    font-size: 11px;
+  }
+
+  .topic-buttons {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 480px) {
+  .ascii-frame {
+    font-size: 15px;
+  }
+
+  body {
+    max-width: 480px;
+    margin: 0 auto;
+  }
+}
+
+/* --- Scrollbar --- */
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--purple);
+  border-radius: 2px;
+}
+
+/* --- Safe Area --- */
+@supports (padding: env(safe-area-inset-bottom)) {
+  .bottom-nav-ascii {
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+}

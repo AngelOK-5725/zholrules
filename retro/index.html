@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1040">
+  <title>AutoTest_KZ - PDD</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- SCREEN: HOME -->
+    <div id="screen-home" class="screen active">
+      <pre class="ascii-frame">
++===========================================+
+|          A U T O T E S T _ K Z           |
+|-------------------------------------------|
+| <span class="time" id="header-time">19:02</span>                   [<span class="admin-badge" id="admin-badge" style="display:none;">!!</span>] <span class="level" id="level-badge">100%</span>  |
+|                                           |
+|-------------------------------------------|
+|         <span class="section-title">P R O F I L</span>  <span id="user-name-display">USER</span>       |
+|-------------------------------------------|
+|                                           |
+|    <span class="motto">"Na start, vnimanie, CON!"</span>            |
+|                                           |
+|       .-------------------.              |
+|       |   /\___/\         |              |
+|       |  ( ' @ ' ) <span class="book-tag">[PDD!]</span>|              |
+|       |   (_____)         |              |
+|       '----||-||----------'              |
+|            ^^ ^^                         |
+|                                           |
+|-------------------------------------------|
+|  [ <span class="stat-label">XP</span> ] :  <span class="progress-bar">|||||||||||||.....</span> (<span id="xp-pct">75</span>%)    |
+|  [ <span class="stat-label">Stars</span>]:  <span id="stars-count">150</span> <span class="star-icon">*</span>                       |
+|-------------------------------------------|
+|                                           |
+|   <span class="section-title">M O I   D O S T I Z H E N I Y A</span>        |
+|  .---.  .---.  .---.  .---.              |
+|  | ? |  | ? |  | <span class="star-icon">*</span> |  | X |              |
+|  '---'  '---'  '---'  '---'              |
+|                                           |
+|-------------------------------------------|
+|  <span class="section-title">V Y B O R   T E S T A</span>                   |
+|                                           |
+|   (<span class="mode-icon">:</span>) [ <span class="clickable" onclick="startQuiz('random')">S L U C H A Y N Y E</span> ]          |
+|                                           |
+|   (<span class="mode-icon">~</span>) [ <span class="clickable" onclick="showTopicPicker()">T E M A T I C H E S K I Y</span> ]     |
+|                                           |
+|   (<span class="mode-icon">#</span>) [ <span class="clickable" onclick="startExam()">S I M U L Y A T O R</span> ] <span class="vip-tag">&lt;VIP&gt;</span>      |
+|                                           |
++===========================================+
+      </pre>
+    </div>
+
+    <!-- SCREEN: TOPICS -->
+    <div id="screen-topics" class="screen">
+      <pre class="ascii-frame">
++===========================================+
+|         <span class="section-title">T E M A T I C H E S K I Y</span>          |
+|-------------------------------------------|
+|  Vyberite kategoriyu:                     |
+|                                           |
+|  [1] <span class="cat-icon">|</span> Z N A K I                    |
+|  [2] <span class="cat-icon">|</span> R A Z M E T K A              |
+|  [3] <span class="cat-icon">|</span> P R I O R I T E T            |
+|  [4] <span class="cat-icon">|</span> S K O R O S T                |
+|  [5] <span class="cat-icon">|</span> M A N E V R I R O V A N I E  |
+|  [6] <span class="cat-icon">|</span> O S T A N O V K A            |
+|  [7] <span class="cat-icon">|</span> S V E T O F O R Y            |
+|  [8] <span class="cat-icon">|</span> P E S H E H O D Y            |
+|  [9] <span class="cat-icon">|</span> D T P                        |
+|  [0] <span class="cat-icon">|</span> O S N O V Y  P D D           |
+|                                           |
+|-------------------------------------------|
+|  Voprosov v bazе: <span id="total-questions">80</span>                |
++===========================================+
+      </pre>
+      <div class="topic-buttons">
+        <button class="ascii-btn" onclick="startQuiz('topic','znaki')">[1] Znaki</button>
+        <button class="ascii-btn" onclick="startQuiz('topic','razmetka')">[2] Razmetka</button>
+        <button class="ascii-btn" onclick="startQuiz('topic','prioritet')">[3] Prioritet</button>
+        <button class="ascii-btn" onclick="startQuiz('topic','skorost')">[4] Skorost</button>
+        <button class="ascii-btn" onclick="startQuiz('topic','manevr')">[5] Manevr</button>
+        <button class="ascii-btn" onclick="startQuiz('topic','ostanovka')">[6] Ostanovka</button>
+        <button class="ascii-btn" onclick="startQuiz('topic','svetofor')">[7] Svetofory</button>
+        <button class="ascii-btn" onclick="startQuiz('topic','peschodcy')">[8] Peshehody</button>
+        <button class="ascii-btn" onclick="startQuiz('topic','dtp')">[9] DTP</button>
+        <button class="ascii-btn" onclick="startQuiz('topic','osnovy')">[0] Osnovy PDD</button>
+      </div>
+    </div>
+
+    <!-- SCREEN: GAME -->
+    <div id="screen-game" class="screen">
+      <pre class="ascii-frame">
++===========================================+
+|      <span class="section-title">D O R O Z H N Y   S P R I N T</span>       |
+|-------------------------------------------|
+|                                           |
+|   .-----------------------------------.   |
+|   |  VREMYA: <span id="game-timer-display" class="timer">60</span>s               |   |
+|   |  SCHYOT: <span id="game-score-display" class="score">0</span>                 |   |
+|   |  KOMBO:  <span id="game-combo-display">x1</span>                  |   |
+|   '-----------------------------------'   |
+|                                           |
+|   .-----------------------------------.   |
+|   |                                   |   |
+|   |  <span id="game-question-text">Vopros poyavitsya zdes...</span>  |   |
+|   |                                   |   |
+|   '-----------------------------------'   |
+|                                           |
+|   [ A ] <span class="clickable" onclick="answerGame(0)">Variant otveta 1</span>          |
+|   [ B ] <span class="clickable" onclick="answerGame(1)">Variant otveta 2</span>          |
+|   [ C ] <span class="clickable" onclick="answerGame(2)">Variant otveta 3</span>          |
+|   [ D ] <span class="clickable" onclick="answerGame(3)">Variant otveta 4</span>          |
+|                                           |
++===========================================+
+
+        <button class="ascii-btn btn-start" onclick="startMiniGame()">
+          [ S T A R T ]
+        </button>
+      </pre>
+    </div>
+
+    <!-- SCREEN: PROFILE -->
+    <div id="screen-profile" class="screen">
+      <pre class="ascii-frame">
++===========================================+
+|         <span class="section-title">P R O F I L</span>                       |
+|-------------------------------------------|
+|                                           |
+|    .---.                                 |
+|    | <span id="profile-avatar">@</span> |  <span id="profile-name-display">UserName</span>                  |
+|    '---'  <span id="profile-goal">Novichok</span>              |
+|                                           |
+|-------------------------------------------|
+|  <span class="section-title">S T A T I S T I K A</span>                    |
+|                                           |
+|  Vsego otvecheno:    <span id="stat-total">0</span>              |
+|  Pravilnyh:          <span id="stat-correct">0</span> (<span id="stat-accuracy">0%</span>)     |
+|  Ohibok:             <span id="stat-wrong">0</span>              |
+|  Streak (dney):      <span id="stat-streak">0</span> <span class="fire">~</span>             |
+|  Stars:              <span id="stat-stars">0</span> <span class="star-icon">*</span>              |
+|                                           |
+|-------------------------------------------|
+|  <span class="section-title">P R O G R E S S</span>                       |
+|                                           |
+|  Znaki:      <span class="mini-bar" id="prog-znaki">[----------]</span> 0%   |
+|  Razmetka:   <span class="mini-bar" id="prog-razmetka">[----------]</span> 0%   |
+|  Prioritet:  <span class="mini-bar" id="prog-prioritet">[----------]</span> 0%   |
+|  Skorost:    <span class="mini-bar" id="prog-skorost">[----------]</span> 0%   |
+|  Manevr:     <span class="mini-bar" id="prog-manevr">[----------]</span> 0%   |
+|  Svetofory:  <span class="mini-bar" id="prog-svetofor">[----------]</span> 0%   |
+|                                           |
++===========================================+
+      </pre>
+    </div>
+
+    <!-- SCREEN: ADMIN -->
+    <div id="screen-admin" class="screen">
+      <pre class="ascii-frame">
++===========================================+
+|      <span class="section-title">P A N E L   U P R A V L E N I Y A</span>    |
+|-------------------------------------------|
+|                                           |
+|  [<span class="clickable" onclick="showAdminTab('questions')">1</span>] D O B A V I T '  V O P R O S      |
+|  [<span class="clickable" onclick="showAdminTab('categories')">2</span>] K A T E G O R I I               |
+|  [<span class="clickable" onclick="showAdminTab('list')">3</span>] S P I S O K   V O P R O S O V    |
+|  [<span class="clickable" onclick="showAdminTab('export')">4</span>] E K S P O R T   J S O N          |
+|                                           |
+|-------------------------------------------|
+|                                           |
+|  <span id="admin-content">Vyberite deystvie...</span>         |
+|                                           |
++===========================================+
+      </pre>
+
+      <!-- Admin: Add Question Form -->
+      <div id="admin-form" style="display:none;">
+        <pre class="ascii-frame small">
++-------------------------------------------+
+|  <span class="section-title">N O V Y   V O P R O S</span>                  |
++-------------------------------------------+
+| Kategoriya:                               |
+| [ <select id="admin-category" class="ascii-select"></select> ]
+|                                           |
+| Tekst voprosa:                            |
+| [ <textarea id="admin-question" class="ascii-input" rows="2"></textarea> ]
+|                                           |
+| Varianty otvetov:                         |
+| [A] [ <input id="opt-a" class="ascii-input" placeholder="Variant A"> ] <input type="checkbox" id="correct-a"> *
+| [B] [ <input id="opt-b" class="ascii-input" placeholder="Variant B"> ] <input type="checkbox" id="correct-b"> *
+| [C] [ <input id="opt-c" class="ascii-input" placeholder="Variant C"> ] <input type="checkbox" id="correct-c"> *
+| [D] [ <input id="opt-d" class="ascii-input" placeholder="Variant D"> ] <input type="checkbox" id="correct-d"> *
+|                                           |
+| Poyasnenie:                               |
+| [ <textarea id="admin-explanation" class="ascii-input" rows="2"></textarea> ]
+|                                           |
+| [ <span class="clickable" onclick="saveQuestion()">S O K R A N I T '</span> ]              |
++-------------------------------------------+
+        </pre>
+      </div>
+    </div>
+
+    <!-- QUIZ SCREEN (overlay) -->
+    <div id="screen-quiz" class="screen" style="display:none;">
+      <pre class="ascii-frame">
++===========================================+
+|  [<span class="clickable" onclick="exitQuiz()">X</span>] Vopros <span id="quiz-current">1</span>/<span id="quiz-total">20</span>            |
+|-------------------------------------------|
+|  <span class="progress-bar" id="quiz-progress-bar">[|||||...........]</span>            |
+|-------------------------------------------|
+|                                           |
+|  <span id="quiz-question-text">Text voprosa zdes...</span>            |
+|                                           |
+|-------------------------------------------|
+|  [A] <span class="clickable" onclick="selectQuizOption(0)">Variant 1</span>              |
+|  [B] <span class="clickable" onclick="selectQuizOption(1)">Variant 2</span>              |
+|  [C] <span class="clickable" onclick="selectQuizOption(2)">Variant 3</span>              |
+|  [D] <span class="clickable" onclick="selectQuizOption(3)">Variant 4</span>              |
+|                                           |
+|-------------------------------------------|
+|  <span id="quiz-explanation" style="display:none;">
+|  POYASNNIE:                               |
+|  <span id="quiz-explanation-text"></span>         |
+|  </span>                                      |
+|                                           |
+|  [ <span class="clickable" id="quiz-next-btn" onclick="nextQuizQuestion()">D A L E E -></span> ]      |
++===========================================+
+      </pre>
+    </div>
+
+    <!-- BOTTOM NAV -->
+    <nav class="bottom-nav-ascii">
+      <button class="nav-ascii-btn active" data-screen="home" onclick="switchScreen('home')">
+[<span class="nav-icon">=</span>]<br><span class="nav-label">Glavn.</span>
+      </button>
+      <button class="nav-ascii-btn" data-screen="topics" onclick="switchScreen('topics')">
+[<span class="nav-icon">~</span>]<br><span class="nav-label">Temat.</span>
+      </button>
+      <button class="nav-ascii-btn" data-screen="game" onclick="switchScreen('game')">
+[<span class="nav-icon">#</span>]<br><span class="nav-label">Igra</span>
+      </button>
+      <button class="nav-ascii-btn" data-screen="profile" onclick="switchScreen('profile')">
+[<span class="nav-icon">@</span>]<br><span class="nav-label">Profil</span>
+      </button>
+      <button class="nav-ascii-btn" data-screen="admin" id="admin-nav-btn" style="display:none;" onclick="switchScreen('admin')">
+[<span class="nav-icon">!</span>]<br><span class="nav-label">Admin</span>
+      </button>
+    </nav>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
