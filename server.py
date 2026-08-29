@@ -181,9 +181,9 @@ def validate_telegram_webapp(init_data: str, bot_token: str) -> dict:
         if computed_hash != received_hash:
             return None
 
-        # Check auth_date (5 minute window)
+        # Check auth_date (24 hour window — Mini App stays open long)
         auth_date = int(data.get('auth_date', 0))
-        if time.time() - auth_date > 300:
+        if time.time() - auth_date > 86400:
             return None
 
         return json.loads(data.get('user', '{}'))
@@ -253,18 +253,28 @@ def static_files(path):
 def get_user():
     """Get or create user profile."""
     tg_id = request.tg_user['id']
+    owner_id = int(os.getenv('OWNER_TELEGRAM_ID', 0))
+    is_admin = (tg_id == owner_id)
+
+    logger.info(f'get_user: tg_id={tg_id}, owner_id={owner_id}, is_admin={is_admin}')
+
     user = User.query.filter_by(tg_id=tg_id).first()
 
     if not user:
         user = User(
             tg_id=tg_id,
             name=request.tg_user.get('first_name', ''),
-            is_admin=(tg_id == int(os.getenv('OWNER_TELEGRAM_ID', 0))),
+            is_admin=is_admin,
         )
         stats = UserStats(user=user)
         db.session.add(user)
         db.session.add(stats)
         db.session.commit()
+    else:
+        # Always sync admin status from env
+        if user.is_admin != is_admin:
+            user.is_admin = is_admin
+            db.session.commit()
 
     # Update last active
     user.last_active = datetime.utcnow()
