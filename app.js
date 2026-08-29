@@ -8,7 +8,7 @@
 // ============================================
 // CONFIG
 // ============================================
-const OWNER_TELEGRAM_ID = null; // Set your Telegram ID here
+const OWNER_TELEGRAM_ID = 1323250813;
 const QUESTIONS_PER_MIX = 20;
 const EXAM_QUESTIONS = 40;
 const EXAM_TIME_MINUTES = 40;
