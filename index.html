@@ -200,6 +200,13 @@
         <h3>Настройки</h3>
         <div class="settings-list">
           <div class="setting-item">
+            <span>Язык / Tіl</span>
+            <select id="lang-select" class="input-field" style="width:auto;padding:6px 12px;" onchange="setLanguage(this.value)">
+              <option value="ru">Русский</option>
+              <option value="kk">Қазақша</option>
+            </select>
+          </div>
+          <div class="setting-item">
             <span>Тёмная тема</span>
             <label class="switch">
               <input type="checkbox" id="dark-mode-toggle" onchange="toggleDarkMode()">

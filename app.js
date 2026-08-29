@@ -1,9 +1,209 @@
 /**
  * ============================================
- * ZholRules — ПДД Казахстана
+ * ZholRules — PDD Kazakhstan
  * Telegram Mini App
  * ============================================
  */
+
+// ============================================
+// i18n — TRANSLATIONS
+// ============================================
+const LANGUAGES = {
+  ru: {
+    app_title: 'ZholRules',
+    greeting: 'Привет',
+    friend: 'друг',
+    welcome_msg: 'Добро пожаловать в ZholRules — ваш умный помощник для подготовки к экзамену по ПДД РК',
+    start: 'Начать',
+    goal_title: 'Какая ваша цель?',
+    goal_newbie: 'Новичок',
+    goal_newbie_desc: 'Начинаю учить ПДД с нуля',
+    goal_refresh: 'Освежить',
+    goal_refresh_desc: 'Хочу повторить правила',
+    goal_exam: 'Сдаю экзамен',
+    goal_exam_desc: 'Готовлюсь к сдаче в СпецЦОНе',
+    exam_date: 'Дата экзамена (необязательно)',
+    continue_btn: 'Продолжить',
+    daily_progress: 'Дневной прогресс',
+    streak: 'дней подряд',
+    questions_today: 'вопросов сегодня',
+    quick_start: '⚡ Быстрый старт — Экзамен',
+    training_modes: 'Режимы обучения',
+    random_mix: 'Случайный микс',
+    by_topics: 'По темам',
+    speccon: 'Как в СпецЦОНе',
+    my_errors: 'Мои ошибки',
+    categories: 'Категории',
+    mini_game: 'Дорожный Спринт',
+    mini_game_desc: '60 секунд быстрых вопросов. Зарабатывай комбо!',
+    start_game: 'Старт!',
+    game_over: 'Гонка завершена!',
+    score: 'Очки',
+    correct_of: 'Верных ответов',
+    max_combo: 'Максимальное комбо',
+    play_again: 'Играть снова',
+    profile: 'Профиль',
+    total_questions: 'Всего вопросов',
+    accuracy: 'Точность',
+    streak_label: 'Стрик дней',
+    stars_label: 'Stars',
+    category_progress: 'Прогресс по категориям',
+    settings: 'Настройки',
+    dark_mode: 'Тёмная тема',
+    sounds: 'Звуки',
+    admin_panel: 'Панель управления',
+    create_question: 'Создать вопрос',
+    question_list: 'Список вопросов',
+    categories_admin: 'Категории',
+    export_json: 'Экспорт JSON',
+    category: 'Категория',
+    question_text: 'Текст вопроса',
+    content_type: 'Тип контента',
+    no_media: 'Без медиа',
+    photo: 'Фото',
+    video: 'Видео',
+    media_url: 'URL медиафайла',
+    answer_options: 'Варианты ответов',
+    add_option: '+ Добавить вариант',
+    choice_type: 'Тип выбора',
+    single_choice: 'Один правильный ответ',
+    multiple_choice: 'Несколько правильных ответов',
+    explanation: 'Пояснение',
+    difficulty: 'Сложность',
+    easy: 'Лёгкий',
+    medium: 'Средний',
+    hard: 'Сложный',
+    save: '💾 Сохранить вопрос',
+    next: 'Далее →',
+    finish: '🏁 Завершить',
+    result: 'Результат',
+    explanation_title: '📖 Разбор',
+    retry: '🔄 Пповторить',
+    home: '🏠 На главную',
+    payment_title: '⭐ Telegram Stars',
+    pro_exam: 'СпецЦОН Симулятор PRO',
+    pro_exam_price: '25 Stars',
+    pro_exam_desc: 'Полная симуляция экзамена',
+    extra_lives: '+3 Жизни',
+    extra_lives_price: '5 Stars',
+    extra_lives_desc: 'Восстановить жизни',
+    no_ads: 'Без рекламы',
+    no_ads_price: '15 Stars',
+    no_ads_desc: 'Убрать рекламу навсегда',
+    api_error: 'Ошибка сервера. Попробуйте позже.',
+    auth_required: 'Откройте через Telegram бота.',
+    access_denied: 'Доступ запрещён.',
+    not_found: 'Не найдено.',
+  },
+  kk: {
+    app_title: 'ZholRules',
+    greeting: 'Salem',
+    friend: 'dostym',
+    welcome_msg: 'ZholRules-ge kosh keldiniz — Qazaqstan AV JQ dайыndaludyng akylly komekshisi',
+    start: 'Bastau',
+    goal_title: 'Sizdin maksatynyz kim?',
+    goal_newbie: 'Jana bashtauyshy',
+    goal_newbie_desc: 'AV JQdyn tura bastaymyn',
+    goal_refresh: 'Jangertu',
+    goal_refresh_desc: 'Erejelerdi qaytalaumyn',
+    goal_exam: 'Imtihanga ttyramyn',
+    goal_exam_desc: 'SpezCON-da imtihanga dayyndalyp jatyrmin',
+    exam_date: 'Imtihan kunii (mynjett emes)',
+    continue_btn: 'Jalqastyrw',
+    daily_progress: 'Kundik ilgerilew',
+    streak: 'kun qatar',
+    questions_today: 'sawaldar bygin',
+    quick_start: '⚡ Birinshi baspa — Imtihan',
+    training_modes: 'Oqutu ruuderi',
+    random_mix: 'Keditti aralas',
+    by_topics: 'Taqyryp boyinsha',
+    speccon: 'SpezCON sekin',
+    my_errors: 'Meni qatelerim',
+    categories: 'Sanattar',
+    mini_game: 'Jol Sprinti',
+    mini_game_desc: '60 sekindik tez sawaldar. Kombo jina!',
+    start_game: 'Bastau!',
+    game_over: 'Oyin ayaqtaldy!',
+    score: 'Ulish',
+    correct_of: 'Durys jawaptar',
+    max_combo: 'Max kombo',
+    play_again: 'Qayta oinaw',
+    profile: 'Profil',
+    total_questions: 'Barlyq sawaldar',
+    accuracy: 'Dәldik',
+    streak_label: 'Kun striki',
+    stars_label: 'Stars',
+    category_progress: 'Sanattar boyinsha ilgerilew',
+    settings: 'Baptau',
+    dark_mode: 'Qara tema',
+    sounds: 'Dybystar',
+    admin_panel: 'Basqarw paneli',
+    create_question: 'Sawal qosw',
+    question_list: 'Sawaldar tizmesi',
+    categories_admin: 'Sanattar',
+    export_json: 'JSON eksport',
+    category: 'Sanat',
+    question_text: 'Sawal mazmwny',
+    content_type: 'Kontent turi',
+    no_media: 'Mediasyz',
+    photo: 'Surat',
+    video: 'Video',
+    media_url: 'Media URL',
+    answer_options: 'Jawap varianttary',
+    add_option: '+ Variant qosw',
+    choice_type: 'Tandaw turi',
+    single_choice: 'Bir durys jawap',
+    multiple_choice: 'Birneshe durys jawap',
+    explanation: 'Tusindirme',
+    difficulty: 'Qyin',
+    easy: 'Ongay',
+    medium: 'Ortasha',
+    hard: 'Qyin',
+    save: '💾 Sawaldy saqtau',
+    next: 'Keldi →',
+    finish: '🏁 Ayaqtaw',
+    result: 'Natije',
+    explanation_title: '📖 Tüsindirme',
+    retry: '🔄 Qaytalaw',
+    home: '🏠 Basty betke',
+    payment_title: '⭐ Telegram Stars',
+    pro_exam: 'SpezCON Simulator PRO',
+    pro_exam_price: '25 Stars',
+    pro_exam_desc: 'Tolq imtihan simulyatsiyasy',
+    extra_lives: '+3 Ömir',
+    extra_lives_price: '5 Stars',
+    extra_lives_desc: 'Ömirdi qalpyna keltiru',
+    no_ads: 'Reklamasyz',
+    no_ads_price: '15 Stars',
+    no_ads_desc: 'Reklamany minesiz',
+    api_error: 'Server qatesi. Kәjinі qaytalap körіñiz.',
+    auth_required: 'Telegram boty arqyly ashynyzy.',
+    access_denied: 'Kirw týsirilmeydi.',
+    not_found: 'Tabylmady.',
+  },
+};
+
+let currentLang = localStorage.getItem('zholrules_lang') || 'ru';
+
+function t(key) {
+  return LANGUAGES[currentLang]?.[key] || LANGUAGES.ru[key] || key;
+}
+
+function setLanguage(lang) {
+  currentLang = lang;
+  localStorage.setItem('zholrules_lang', lang);
+  applyTranslations();
+}
+
+function applyTranslations() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    el.textContent = t(key);
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
+  });
+}
 
 // ============================================
 // CONFIG
@@ -120,7 +320,15 @@ async function apiGet(path) {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: getAuthHeaders(),
   });
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const msg = err.error || `Server error (${res.status})`;
+    if (res.status === 401) throw new Error('Authorization required. Open via Telegram bot.');
+    if (res.status === 403) throw new Error('Access denied.');
+    if (res.status === 404) throw new Error('Not found.');
+    if (res.status >= 500) throw new Error('Server error. Try again later.');
+    throw new Error(msg);
+  }
   return res.json();
 }
 
@@ -133,7 +341,12 @@ async function apiPost(path, body) {
     },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const msg = err.error || `Server error (${res.status})`;
+    if (res.status >= 500) throw new Error('Server error. Try again later.');
+    throw new Error(msg);
+  }
   return res.json();
 }
 
@@ -306,6 +519,7 @@ async function completeOnboarding() {
 function showMainApp() {
   document.getElementById('app').classList.add('active');
   updateUI();
+  applyTranslations();
 }
 
 function updateUI() {
@@ -389,11 +603,13 @@ function updateProfile() {
     `;
   }).join('');
 
-  // Dark mode toggle
+  // Settings
   document.getElementById('dark-mode-toggle').checked = state.settings.darkMode;
   document.getElementById('sounds-toggle').checked = state.settings.sounds;
+  document.getElementById('lang-select').value = currentLang;
 
   applyTheme();
+  applyTranslations();
 }
 
 // ============================================
@@ -1254,26 +1470,27 @@ function closePaymentModal() {
   document.getElementById('payment-modal').style.display = 'none';
 }
 
-function buyProExamWithStars() {
-  // Telegram WebApp Payments API
-  if (window.Telegram?.WebApp?.openInvoice) {
-    // In production, you'd create an invoice on your server
-    Telegram.WebApp.openInvoice('invoice_id_from_server', (status) => {
-      if (status === 'paid') {
-        alert('✅ Покупка успешна! СпецЦОН Симулятор PRO активирован.');
-        state.stats.stars += 25;
-        saveState();
-        closePaymentModal();
-        startExam();
-      } else if (status === 'failed') {
-        alert('❌ Оплата не прошла. Попробуйте ещё раз.');
-      }
+// Telegram Payments — requires TELEGRAM_PAYMENTS_PROVIDER_TOKEN on server
+async function buyProExamWithStars() {
+  try {
+    const data = await apiPost('/api/create-invoice', {
+      item: 'pro_exam',
+      amount: 25,
     });
-  } else {
-    // Dev mode
-    alert('⭐ Оплата Telegram Stars недоступна в режиме разработки.\n\nВ релизе здесь будет интеграция с Telegram Payments.');
-    state.stats.stars += 25;
-    saveState();
+    if (data.invoice_url) {
+      Telegram.WebApp.openInvoice(data.invoice_url, (status) => {
+        if (status === 'paid') {
+          alert('Payment successful!');
+          closePaymentModal();
+          startExam();
+        }
+      });
+    } else {
+      alert('Payments not configured yet. Coming soon!');
+    }
+  } catch (e) {
+    alert('Payments not configured yet. Coming soon!');
+  }
     closePaymentModal();
   }
 }

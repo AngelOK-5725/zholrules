@@ -62,18 +62,18 @@
 
 /* Dark mode overrides */
 .dark-mode {
-  --tg-theme-bg-color: #1a1a2e;
+  --tg-theme-bg-color: #121212;
   --tg-theme-text-color: #e0e0e0;
   --tg-theme-hint-color: #888888;
-  --tg-theme-secondary-bg-color: #16213e;
-  --tg-theme-header-bg-color: #16213e;
-  --tg-theme-section-bg-color: #0f3460;
+  --tg-theme-secondary-bg-color: #1e1e1e;
+  --tg-theme-header-bg-color: #1e1e1e;
+  --tg-theme-section-bg-color: #2a2a2a;
   --amber-light: #2a2a1a;
   --emerald-light: #1a2a1a;
   --red-light: #2a1a1a;
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
-  --shadow-md: 0 2px 8px rgba(0,0,0,0.4);
-  --shadow-lg: 0 4px 16px rgba(0,0,0,0.5);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.5);
+  --shadow-md: 0 2px 8px rgba(0,0,0,0.6);
+  --shadow-lg: 0 4px 16px rgba(0,0,0,0.7);
 }
 
 html {
