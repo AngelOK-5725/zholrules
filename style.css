@@ -92,6 +92,7 @@ body {
   min-height: 100vh;
   min-height: 100dvh;
   overflow-x: hidden;
+  overflow-y: auto;
   /* Prevent iOS rubber-band scrolling */
   -webkit-overflow-scrolling: touch;
   padding-bottom: calc(var(--nav-height) + var(--safe-bottom));
@@ -1571,7 +1572,7 @@ select.input-field {
 
 /* --- iOS: Prevent bounce scroll on body --- */
 body {
-  overscroll-behavior-y: none;
+  overscroll-behavior-y: contain;
 }
 
 /* --- iOS: Fix safe area on quiz screen --- */
