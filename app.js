@@ -2169,18 +2169,25 @@ function exitCards() {
 // ============================================
 // CARD TOUCH HANDLERS (Swipe)
 // ============================================
+let cardMouseStartX = 0;
+let isCardMouseDragging = false;
+
 function setupCardTouchHandlers() {
   const container = document.getElementById('card-container');
   if (!container) return;
 
+  // Touch events
   container.addEventListener('touchstart', handleCardTouchStart, { passive: true });
   container.addEventListener('touchmove', handleCardTouchMove, { passive: false });
   container.addEventListener('touchend', handleCardTouchEnd, { passive: true });
+
+  // Mouse events (for desktop)
+  container.addEventListener('mousedown', handleCardMouseDown);
+  document.addEventListener('mousemove', handleCardMouseMove);
+  document.addEventListener('mouseup', handleCardMouseUp);
 }
 
 function handleCardTouchStart(e) {
-  if (!isCardFlipped) return; // Only swipe after flip
-
   const touch = e.touches[0];
   cardTouchStartX = touch.clientX;
   cardTouchStartY = touch.clientY;
@@ -2193,8 +2200,6 @@ function handleCardTouchStart(e) {
 }
 
 function handleCardTouchMove(e) {
-  if (!isCardFlipped) return;
-
   const touch = e.touches[0];
   cardTouchDeltaX = touch.clientX - cardTouchStartX;
   const deltaY = Math.abs(touch.clientY - cardTouchStartY);
@@ -2223,8 +2228,6 @@ function handleCardTouchMove(e) {
 }
 
 function handleCardTouchEnd() {
-  if (!isCardFlipped) return;
-
   const flashcard = document.getElementById('flashcard');
   const container = document.getElementById('card-container');
 
@@ -2235,11 +2238,26 @@ function handleCardTouchEnd() {
     if (cardTouchDeltaX < -80) {
       // Swipe left → mark for review
       flashcard.style.transform = '';
-      swipeCardLeft();
+      if (isCardFlipped) {
+        swipeCardLeft();
+      } else {
+        // Skip question (mark for review)
+        const q = cardsState.questions[cardsState.currentIndex];
+        if (!cardsState.reviewIds.includes(q.id)) {
+          cardsState.reviewIds.push(q.id);
+          cardsState.reviewCount++;
+        }
+        nextCard();
+      }
     } else if (cardTouchDeltaX > 80) {
-      // Swipe right → next card (same as "Узнал")
+      // Swipe right → next card
       flashcard.style.transform = '';
-      nextCard();
+      if (isCardFlipped) {
+        nextCard();
+      } else {
+        // Just move to next (learned)
+        nextCard();
+      }
     } else {
       // Snap back
       flashcard.style.transform = '';
@@ -2249,6 +2267,76 @@ function handleCardTouchEnd() {
   }
 
   isCardSwiping = false;
+}
+
+// Mouse handlers for desktop
+function handleCardMouseDown(e) {
+  cardMouseStartX = e.clientX;
+  isCardMouseDragging = false;
+  cardTouchDeltaX = 0;
+
+  const flashcard = document.getElementById('flashcard');
+  flashcard.classList.add('swiping');
+}
+
+function handleCardMouseMove(e) {
+  if (cardMouseStartX === 0) return;
+
+  cardTouchDeltaX = e.clientX - cardMouseStartX;
+  isCardMouseDragging = Math.abs(cardTouchDeltaX) > 10;
+
+  if (isCardMouseDragging) {
+    const flashcard = document.getElementById('flashcard');
+    const rotation = cardTouchDeltaX * 0.05;
+    flashcard.style.transform = `translateX(${cardTouchDeltaX}px) rotate(${rotation}deg)`;
+
+    const container = document.getElementById('card-container');
+    if (cardTouchDeltaX < -30) {
+      container.classList.add('swiping-left');
+      container.classList.remove('swiping-right');
+    } else if (cardTouchDeltaX > 30) {
+      container.classList.add('swiping-right');
+      container.classList.remove('swiping-left');
+    } else {
+      container.classList.remove('swiping-left', 'swiping-right');
+    }
+  }
+}
+
+function handleCardMouseUp() {
+  if (cardMouseStartX === 0) return;
+
+  const flashcard = document.getElementById('flashcard');
+  const container = document.getElementById('card-container');
+
+  flashcard.classList.remove('swiping');
+  container.classList.remove('swiping-left', 'swiping-right');
+
+  if (isCardMouseDragging) {
+    if (cardTouchDeltaX < -80) {
+      flashcard.style.transform = '';
+      if (isCardFlipped) {
+        swipeCardLeft();
+      } else {
+        const q = cardsState.questions[cardsState.currentIndex];
+        if (!cardsState.reviewIds.includes(q.id)) {
+          cardsState.reviewIds.push(q.id);
+          cardsState.reviewCount++;
+        }
+        nextCard();
+      }
+    } else if (cardTouchDeltaX > 80) {
+      flashcard.style.transform = '';
+      nextCard();
+    } else {
+      flashcard.style.transform = '';
+    }
+  } else {
+    flashcard.style.transform = '';
+  }
+
+  cardMouseStartX = 0;
+  isCardMouseDragging = false;
 }
 
 // ============================================
