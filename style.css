@@ -1478,7 +1478,8 @@ textarea.input-field {
   display: flex;
   flex-direction: column;
   padding: 16px;
-  overflow: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Swipe hints */
@@ -1509,7 +1510,6 @@ textarea.input-field {
   justify-content: center;
   perspective: 1000px;
   margin-bottom: 20px;
-  overflow: hidden;
   min-height: 300px;
 }
 
@@ -1521,12 +1521,6 @@ textarea.input-field {
   transform-style: preserve-3d;
   transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
   flex-shrink: 0;
-  pointer-events: none;
-}
-
-.flashcard-front,
-.flashcard-back {
-  pointer-events: auto;
 }
 
 .flashcard.flipped {
@@ -1647,8 +1641,6 @@ textarea.input-field {
   flex-direction: column;
   gap: 10px;
   margin-bottom: 12px;
-  position: relative;
-  z-index: 10;
 }
 
 .cards-option {

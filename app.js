@@ -1987,23 +1987,6 @@ function showCardsScreen() {
 
   renderCard();
   setupCardTouchHandlers();
-  setupCardsOptionDelegation();
-}
-
-function setupCardsOptionDelegation() {
-  const optionsEl = document.getElementById('cards-options');
-  // Remove old listener if any
-  optionsEl.removeEventListener('click', handleCardsOptionClick);
-  optionsEl.addEventListener('click', handleCardsOptionClick);
-}
-
-function handleCardsOptionClick(e) {
-  const option = e.target.closest('.cards-option');
-  if (!option || option.classList.contains('disabled')) return;
-  const idx = parseInt(option.dataset.index);
-  if (!isNaN(idx)) {
-    selectCardOption(idx);
-  }
 }
 
 function renderCard() {
@@ -2052,6 +2035,19 @@ function renderCard() {
       <span>${opt}</span>
     </div>
   `).join('');
+
+  // Attach click listeners DIRECTLY to each option (most reliable in WebView)
+  optionsEl.querySelectorAll('.cards-option').forEach(el => {
+    el.addEventListener('click', function() {
+      const idx = parseInt(this.dataset.index);
+      if (!isNaN(idx)) selectCardOption(idx);
+    });
+    el.addEventListener('touchend', function(e) {
+      e.preventDefault();
+      const idx = parseInt(this.dataset.index);
+      if (!isNaN(idx)) selectCardOption(idx);
+    });
+  });
 
   // Hide actions, show options
   document.getElementById('cards-actions').style.display = 'none';
