@@ -10,6 +10,7 @@
   <title>ZholRules — ПДД РК</title>
   <link rel="stylesheet" href="style.css">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
 </head>
 <body>
   <!-- Splash Screen -->
@@ -110,6 +111,11 @@
           <div class="mode-title">По темам</div>
           <div class="mode-desc">Выбор категории</div>
         </div>
+        <div class="mode-card" onclick="startCards()">
+          <div class="mode-icon">🃏</div>
+          <div class="mode-title">Карточки</div>
+          <div class="mode-desc">Учи правила</div>
+        </div>
         <div class="mode-card" onclick="startExam()">
           <div class="mode-icon">🏛️</div>
           <div class="mode-title">Как в СпецЦОНе</div>
@@ -119,6 +125,11 @@
           <div class="mode-icon">📝</div>
           <div class="mode-title">Мои ошибки</div>
           <div class="mode-desc" id="errors-count">0 вопросов</div>
+        </div>
+        <div class="mode-card mode-card-wide" onclick="startCompetition()">
+          <div class="mode-icon">⚔️</div>
+          <div class="mode-title">Состязание</div>
+          <div class="mode-desc">Онлайн vs игрок</div>
         </div>
       </div>
 
@@ -239,14 +250,29 @@
       </div>
 
       <div class="admin-tabs">
-        <button class="admin-tab active" onclick="switchAdminTab('create')">Создать вопрос</button>
-        <button class="admin-tab" onclick="switchAdminTab('list')">Список вопросов</button>
+        <button class="admin-tab active" onclick="switchAdminTab('settings')">⚙️ Настройки</button>
+        <button class="admin-tab" onclick="switchAdminTab('create')">Создать вопрос</button>
+        <button class="admin-tab" onclick="switchAdminTab('list')">Список</button>
         <button class="admin-tab" onclick="switchAdminTab('categories')">Категории</button>
-        <button class="admin-tab" onclick="switchAdminTab('export')">Экспорт JSON</button>
+        <button class="admin-tab" onclick="switchAdminTab('export')">Экспорт</button>
+      </div>
+
+      <!-- Settings Panel -->
+      <div id="admin-settings" class="admin-panel active">
+        <div class="admin-settings-header">
+          <h3>⚙️ Настройки бизнеса</h3>
+          <p>Изменяйте цены и лимиты без передеплоя сервера</p>
+        </div>
+        <div id="admin-settings-list" class="settings-form">
+          <!-- Filled by JS -->
+        </div>
+        <button class="btn btn-primary" onclick="saveSettings()" style="margin-top:20px;">
+          💾 Сохранить все настройки
+        </button>
       </div>
 
       <!-- Create Question Form -->
-      <div id="admin-create" class="admin-panel active">
+      <div id="admin-create" class="admin-panel">
         <div class="form-group">
           <label>Категория</label>
           <select id="admin-category" class="input-field">
@@ -432,6 +458,157 @@
       <div class="result-actions">
         <button class="btn btn-primary" onclick="retryQuiz()">🔄 Повторить</button>
         <button class="btn btn-secondary" onclick="exitQuiz()">🏠 На главную</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cards Screen (overlay) -->
+  <div id="cards-screen" class="screen">
+    <div class="quiz-header">
+      <button class="btn-back" onclick="exitCards()">✕</button>
+      <div class="quiz-progress-bar">
+        <div class="quiz-progress" id="cards-progress" style="width: 0%"></div>
+      </div>
+      <span class="quiz-counter" id="cards-counter">1 / 20</span>
+    </div>
+
+    <div class="cards-content">
+      <!-- Swipe hint -->
+      <div class="cards-hint" id="cards-hint">
+        <span class="cards-hint-left">← Для повторения</span>
+        <span class="cards-hint-right">Узнал →</span>
+      </div>
+
+      <!-- Card container with touch handling -->
+      <div class="card-container" id="card-container">
+        <div class="flashcard" id="flashcard">
+          <!-- Front side -->
+          <div class="flashcard-front">
+            <div class="flashcard-category" id="card-category"></div>
+            <div class="flashcard-question" id="card-question"></div>
+            <div class="flashcard-media" id="card-media"></div>
+            <div class="flashcard-hint">Выбери ответ ниже</div>
+          </div>
+          <!-- Back side -->
+          <div class="flashcard-back">
+            <div class="flashcard-back-header">
+              <span id="card-result-icon">✅</span>
+              <span id="card-result-text">Правильно!</span>
+            </div>
+            <div class="flashcard-back-answer" id="card-correct-answer"></div>
+            <div class="flashcard-back-explanation" id="card-explanation"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Answer options -->
+      <div class="cards-options" id="cards-options">
+        <!-- Filled by JS -->
+      </div>
+
+      <!-- Card actions after flip -->
+      <div class="cards-actions" id="cards-actions" style="display:none;">
+        <button class="btn btn-secondary cards-action-btn" onclick="swipeCardLeft()">
+          📝 Для повторения
+        </button>
+        <button class="btn btn-primary cards-action-btn" onclick="nextCard()">
+          Далее →
+        </button>
+      </div>
+    </div>
+
+    <!-- Cards result -->
+    <div class="quiz-result" id="cards-result" style="display:none;">
+      <div class="result-emoji">🃏</div>
+      <h2>Карточки пройдены!</h2>
+      <div class="result-stats">
+        <div class="result-stat">
+          <span class="result-stat-value" id="cards-correct-count">0</span>
+          <span class="result-stat-label">Запомнил</span>
+        </div>
+        <div class="result-stat">
+          <span class="result-stat-value" id="cards-review-count">0</span>
+          <span class="result-stat-label">Для повторения</span>
+        </div>
+      </div>
+      <div class="result-actions">
+        <button class="btn btn-primary" onclick="startCards()">🔄 Ещё раз</button>
+        <button class="btn btn-secondary" onclick="exitCards()">🏠 На главную</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Competition Screen (overlay) -->
+  <div id="competition-screen" class="screen">
+    <!-- Waiting screen -->
+    <div id="comp-waiting" class="comp-waiting">
+      <div class="comp-waiting-content">
+        <div class="comp-waiting-icon">⚔️</div>
+        <h2>Поиск противника...</h2>
+        <p id="comp-waiting-status">Ожидание другого игрока</p>
+        <div class="comp-waiting-spinner"></div>
+        <button class="btn btn-secondary" onclick="leaveCompetition()" style="margin-top:24px;">✕ Отмена</button>
+      </div>
+    </div>
+
+    <!-- Game screen -->
+    <div id="comp-game" style="display:none;">
+      <div class="comp-header">
+        <div class="comp-player comp-player-you">
+          <span class="comp-player-name" id="comp-your-name">Ты</span>
+          <span class="comp-player-score" id="comp-your-score">0</span>
+        </div>
+        <div class="comp-vs">VS</div>
+        <div class="comp-player comp-player-opponent">
+          <span class="comp-player-name" id="comp-opponent-name">Противник</span>
+          <span class="comp-player-score" id="comp-opponent-score">0</span>
+        </div>
+      </div>
+
+      <div class="comp-progress-bar">
+        <div class="comp-progress-fill" id="comp-progress" style="width:0%"></div>
+      </div>
+      <div class="comp-counter" id="comp-counter">1 / 10</div>
+
+      <div class="comp-question">
+        <div class="comp-question-text" id="comp-question-text"></div>
+        <div class="comp-media" id="comp-media"></div>
+      </div>
+
+      <div class="comp-options" id="comp-options">
+        <!-- Filled by JS -->
+      </div>
+
+      <div class="comp-explanation" id="comp-explanation" style="display:none;">
+        <div class="explanation-card">
+          <h4>📖 Разбор</h4>
+          <p id="comp-explanation-text"></p>
+        </div>
+      </div>
+
+      <div class="comp-footer">
+        <button class="btn btn-primary btn-large" id="comp-next-btn" onclick="nextCompQuestion()" disabled>Далее →</button>
+      </div>
+    </div>
+
+    <!-- Result screen -->
+    <div id="comp-result" class="quiz-result" style="display:none;">
+      <div class="result-emoji" id="comp-result-emoji">⚔️</div>
+      <h2 id="comp-result-title">Результат боя</h2>
+      <div class="comp-result-players">
+        <div class="comp-result-player">
+          <span class="comp-result-name" id="comp-result-your-name">Ты</span>
+          <span class="comp-result-score" id="comp-result-your-score">0</span>
+        </div>
+        <div class="comp-result-vs">:</div>
+        <div class="comp-result-player">
+          <span class="comp-result-name" id="comp-result-opponent-name">Противник</span>
+          <span class="comp-result-score" id="comp-result-opponent-score">0</span>
+        </div>
+      </div>
+      <div class="result-actions">
+        <button class="btn btn-primary" onclick="startCompetition()">🔄 Ещё раз</button>
+        <button class="btn btn-secondary" onclick="exitCompetition()">🏠 На главную</button>
       </div>
     </div>
   </div>

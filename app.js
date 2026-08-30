@@ -33,6 +33,11 @@ const LANGUAGES = {
     by_topics: 'По темам',
     speccon: 'Как в СпецЦОНе',
     my_errors: 'Мои ошибки',
+    cards_mode: 'Карточки',
+    cards_desc: 'Учи правила',
+    cards_learned: 'Запомнил',
+    cards_for_review: 'Для повторения',
+    cards_completed: 'Карточки пройдены!',
     categories: 'Категории',
     mini_game: 'Дорожный Спринт',
     mini_game_desc: '60 секунд быстрых вопросов. Зарабатывай комбо!',
@@ -180,6 +185,11 @@ const LANGUAGES = {
     auth_required: 'Telegram boty arqyly ashynyzy.',
     access_denied: 'Kirw týsirilmeydi.',
     not_found: 'Tabylmady.',
+    cards_mode: 'Kartalar',
+    cards_desc: 'Erejelerdi Ұyr',
+    cards_learned: 'Estımdım',
+    cards_for_review: 'Qaytalaugha',
+    cards_completed: 'Kartalar ayaqtaldy!',
   },
 };
 
@@ -824,8 +834,9 @@ function renderQuestion() {
   const optionsEl = document.getElementById('quiz-options');
   const markers = ['A', 'B', 'C', 'D', 'E', 'F'];
 
+  // Add animation class to options
   optionsEl.innerHTML = q.options.map((opt, idx) => `
-    <div class="quiz-option" data-index="${idx}" onclick="selectQuizOption(${idx})">
+    <div class="quiz-option" data-index="${idx}" onclick="selectQuizOption(${idx})" style="animation: slideInUp 0.3s ease ${idx * 0.05}s both;">
       <span class="quiz-option-marker">${markers[idx]}</span>
       <span class="quiz-option-text">${opt}</span>
     </div>
@@ -849,6 +860,11 @@ function selectQuizOption(index) {
   if (quizState.answered) return;
 
   const q = quizState.questions[quizState.currentIndex];
+
+  // Haptic feedback on selection
+  if (window.Telegram?.WebApp?.HapticFeedback) {
+    Telegram.WebApp.HapticFeedback.impactOccurred('light');
+  }
 
   if (q.multiple_choice) {
     // Toggle selection for multiple choice
@@ -937,9 +953,21 @@ function checkAnswer() {
       }
     }
 
-    // Deduct life in exam mode
+    // Deduct life in exam mode (Pro users have unlimited lives)
     if (quizState.mode === 'exam') {
       quizState.wrongCount++;
+
+      // Only non-Pro users lose lives
+      if (!state.subscription?.is_pro && state.stats.lives > 0) {
+        state.stats.lives--;
+        updateUI(); // Update lives badge immediately
+
+        // Warn when low
+        if (state.stats.lives === 1) {
+          alert('⚠️ Осталась 1 жизнь! Купите Pro для безлимитных жизней.');
+        }
+      }
+
       if (quizState.wrongCount > 8) {
         // Failed exam
         endQuiz(false);
@@ -1320,7 +1348,9 @@ function switchAdminTab(tab) {
   event.currentTarget.classList.add('active');
   document.getElementById(`admin-${tab}`).classList.add('active');
 
-  if (tab === 'list') {
+  if (tab === 'settings') {
+    loadAdminSettings();
+  } else if (tab === 'list') {
     renderAdminQuestionsList();
   } else if (tab === 'create') {
     populateAdminCategories();
@@ -1605,8 +1635,6 @@ async function buyProExamWithStars() {
   } catch (e) {
     alert('Payments not configured yet. Coming soon!');
   }
-    closePaymentModal();
-  }
 }
 
 function buyProExam() {
@@ -1615,11 +1643,35 @@ function buyProExam() {
 
 function buyLives() {
   if (window.Telegram?.WebApp?.openInvoice) {
-    // Server-side invoice creation needed
-    alert('⭐ Оплата Telegram Stars — интеграция с сервером необходима.');
+    const tg = window.Telegram.WebApp;
+    if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
+      // Create invoice for lives
+      apiPost('/api/payment/invoice-lives', {}).then(data => {
+        if (data.invoice_url) {
+          tg.openInvoice(data.invoice_url, (status) => {
+            if (status === 'paid') {
+              state.stats.lives += 3;
+              saveState();
+              updateUI();
+              closePaymentModal();
+              tg.showAlert('❤️ +3 жизни добавлены!');
+            }
+          });
+        } else {
+          alert('Ошибка создания invoice');
+        }
+      }).catch(e => {
+        // Dev mode: add lives without payment
+        state.stats.lives += 3;
+        saveState();
+        updateUI();
+        closePaymentModal();
+        alert('❤️ +3 жизни добавлены!');
+      });
+    }
   } else {
+    // Dev mode: add lives without payment
     state.stats.lives += 3;
-    state.stats.stars += 5;
     saveState();
     updateUI();
     closePaymentModal();
@@ -1676,6 +1728,648 @@ function formatTime(seconds) {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+// ============================================
+// ADMIN: SETTINGS
+// ============================================
+let adminSettings = [];
+
+async function loadAdminSettings() {
+  try {
+    const data = await apiGet('/api/settings');
+    adminSettings = data;
+    renderSettingsForm(data);
+  } catch (e) {
+    console.error('Failed to load settings:', e);
+    document.getElementById('admin-settings-list').innerHTML = '<p style="color:var(--red);">Ошибка загрузки настроек</p>';
+  }
+}
+
+function renderSettingsForm(settings) {
+  const container = document.getElementById('admin-settings-list');
+  if (!settings || settings.length === 0) {
+    container.innerHTML = '<p>Нет настроек</p>';
+    return;
+  }
+
+  const settingLabels = {
+    'pro_stars_price': '⭐ Цена Pro подписки (Stars)',
+    'free_error_limit': '📝 Лимит ошибок (бесплатный план)',
+    'max_daily_lives': '❤️ Жизни в день',
+    'daily_questions_target': '🎯 Цель вопросов в день',
+    'exam_questions': '📋 Вопросов в экзамене',
+    'exam_time_minutes': '⏱️ Время экзамена (мин)',
+    'mini_game_duration': '🎮 Длительность мини-игры (сек)',
+    'free_plan_enabled': '🆓 Бесплатный план',
+    'pro_plan_enabled': '💎 Pro план доступен',
+    'lives_stars_price': '❤️ Цена жизней (Stars)',
+  };
+
+  const boolKeys = ['free_plan_enabled', 'pro_plan_enabled'];
+
+  container.innerHTML = settings.map(s => {
+    const label = settingLabels[s.key] || s.key;
+    const isBool = boolKeys.includes(s.key);
+    const isNumber = ['pro_stars_price', 'free_error_limit', 'max_daily_lives', 'daily_questions_target', 'exam_questions', 'exam_time_minutes', 'mini_game_duration', 'lives_stars_price'].includes(s.key);
+
+    if (isBool) {
+      return `
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">${label}</span>
+            <span class="setting-desc">${s.description}</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" data-key="${s.key}" ${s.value === 'true' ? 'checked' : ''} class="settings-toggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+      `;
+    } else {
+      return `
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">${label}</span>
+            <span class="setting-desc">${s.description}</span>
+          </div>
+          <input type="${isNumber ? 'number' : 'text'}" data-key="${s.key}" value="${s.value}" class="input-field settings-input">
+        </div>
+      `;
+    }
+  }).join('');
+}
+
+async function saveSettings() {
+  const inputs = document.querySelectorAll('.settings-input, .settings-toggle');
+  const settings = [];
+
+  inputs.forEach(input => {
+    const key = input.dataset.key;
+    let value;
+
+    if (input.classList.contains('settings-toggle')) {
+      value = input.checked ? 'true' : 'false';
+    } else {
+      value = input.value;
+    }
+
+    settings.push({ key, value });
+  });
+
+  try {
+    await apiPost('/api/settings', { settings });
+    alert('✅ Настройки сохранены!');
+  } catch (e) {
+    console.error('Failed to save settings:', e);
+    alert('❌ Ошибка сохранения настроек');
+  }
+}
+
+// ============================================
+// CARDS MODE (Flashcards)
+// ============================================
+let cardsState = null;
+let cardTouchStartX = 0;
+let cardTouchStartY = 0;
+let cardTouchDeltaX = 0;
+let isCardSwiping = false;
+let isCardFlipped = false;
+
+function startCards() {
+  // Check lives
+  if (state.stats.lives <= 0) {
+    showPaymentModal();
+    return;
+  }
+
+  // Shuffle questions
+  const shuffled = shuffleArray([...questionsData.questions]);
+
+  cardsState = {
+    questions: shuffled,
+    currentIndex: 0,
+    correctCount: 0,
+    reviewCount: 0,
+    reviewIds: [], // question IDs marked for review
+  };
+
+  showCardsScreen();
+}
+
+function showCardsScreen() {
+  const screen = document.getElementById('cards-screen');
+  screen.classList.add('active');
+  document.getElementById('cards-result').style.display = 'none';
+  document.querySelector('#cards-screen .cards-content').style.display = 'flex';
+
+  renderCard();
+  setupCardTouchHandlers();
+}
+
+function renderCard() {
+  const q = cardsState.questions[cardsState.currentIndex];
+  if (!q) return;
+
+  isCardFlipped = false;
+  const flashcard = document.getElementById('flashcard');
+  flashcard.classList.remove('flipped', 'swipe-left', 'swipe-right', 'swiping');
+
+  // Progress
+  const total = cardsState.questions.length;
+  const pct = (cardsState.currentIndex / total) * 100;
+  document.getElementById('cards-progress').style.width = `${pct}%`;
+  document.getElementById('cards-counter').textContent = `${cardsState.currentIndex + 1} / ${total}`;
+
+  // Category
+  const cat = questionsData.categories.find(c => c.id === q.category);
+  document.getElementById('card-category').textContent = cat ? `${cat.icon} ${cat.name}` : q.category;
+
+  // Question
+  document.getElementById('card-question').textContent = q.question;
+
+  // Media
+  const mediaEl = document.getElementById('card-media');
+  if (q.media_type === 'image' && q.media_url) {
+    mediaEl.innerHTML = `<img src="${q.media_url}" alt="Медиа" loading="lazy">`;
+  } else if (q.media_type === 'video' && q.media_url) {
+    mediaEl.innerHTML = `<video src="${q.media_url}" controls muted></video>`;
+  } else {
+    mediaEl.innerHTML = '';
+  }
+
+  // Correct answer text
+  const correctIdx = q.correct_options[0];
+  document.getElementById('card-correct-answer').textContent = q.options[correctIdx];
+  document.getElementById('card-explanation').textContent = q.explanation || '';
+
+  // Render options
+  const optionsEl = document.getElementById('cards-options');
+  const markers = ['A', 'B', 'C', 'D', 'E', 'F'];
+
+  optionsEl.innerHTML = q.options.map((opt, idx) => `
+    <div class="cards-option" onclick="selectCardOption(${idx})">
+      <span class="cards-option-marker">${markers[idx]}</span>
+      <span>${opt}</span>
+    </div>
+  `).join('');
+
+  // Hide actions, show options
+  document.getElementById('cards-actions').style.display = 'none';
+  document.getElementById('cards-options').style.display = 'flex';
+}
+
+function selectCardOption(index) {
+  if (isCardFlipped) return;
+
+  const q = cardsState.questions[cardsState.currentIndex];
+  const isCorrect = q.correct_options.includes(index);
+
+  // Haptic feedback
+  if (window.Telegram?.WebApp?.HapticFeedback) {
+    Telegram.WebApp.HapticFeedback.impactOccurred(isCorrect ? 'success' : 'error');
+  }
+
+  // Mark options
+  const options = document.querySelectorAll('.cards-option');
+  options.forEach((opt, idx) => {
+    opt.classList.add('disabled');
+    if (q.correct_options.includes(idx)) {
+      opt.classList.add('correct');
+    } else if (idx === index && !isCorrect) {
+      opt.classList.add('wrong');
+    }
+  });
+
+  // Flip card
+  setTimeout(() => {
+    const flashcard = document.getElementById('flashcard');
+    flashcard.classList.add('flipped');
+    isCardFlipped = true;
+
+    // Update back side
+    if (isCorrect) {
+      document.getElementById('card-result-icon').textContent = '✅';
+      document.getElementById('card-result-text').textContent = 'Правильно!';
+      cardsState.correctCount++;
+    } else {
+      document.getElementById('card-result-icon').textContent = '❌';
+      document.getElementById('card-result-text').textContent = 'Неправильно';
+    }
+
+    // Update stats
+    state.stats.totalAnswered++;
+    state.stats.dailyAnswered++;
+    if (isCorrect) {
+      state.stats.totalCorrect++;
+      state.stats.dailyCorrect++;
+    }
+    saveState();
+
+    // Show actions, hide options
+    document.getElementById('cards-actions').style.display = 'flex';
+    document.getElementById('cards-options').style.display = 'none';
+  }, 400);
+}
+
+function nextCard() {
+  cardsState.currentIndex++;
+
+  if (cardsState.currentIndex >= cardsState.questions.length) {
+    endCards();
+  } else {
+    renderCard();
+  }
+}
+
+function swipeCardLeft() {
+  // Mark current question for review
+  const q = cardsState.questions[cardsState.currentIndex];
+  if (!cardsState.reviewIds.includes(q.id)) {
+    cardsState.reviewIds.push(q.id);
+    cardsState.reviewCount++;
+
+    // Add to errors for persistence
+    if (!state.errors.includes(q.id)) {
+      state.errors.push(q.id);
+    }
+  }
+
+  // Animate card swipe left
+  const flashcard = document.getElementById('flashcard');
+  flashcard.classList.add('swipe-left');
+
+  setTimeout(() => {
+    nextCard();
+  }, 300);
+}
+
+function endCards() {
+  // Hide cards content, show result
+  document.querySelector('#cards-screen .cards-content').style.display = 'none';
+  document.getElementById('cards-result').style.display = 'block';
+
+  document.getElementById('cards-correct-count').textContent = cardsState.correctCount;
+  document.getElementById('cards-review-count').textContent = cardsState.reviewCount;
+}
+
+function exitCards() {
+  if (cardsState && cardsState.reviewIds.length > 0) {
+    // Save review items to backend
+    apiPost('/api/errors/bulk', { question_ids: cardsState.reviewIds }).catch(() => {});
+  }
+
+  document.getElementById('cards-screen').classList.remove('active');
+  cardsState = null;
+  updateUI();
+}
+
+// ============================================
+// CARD TOUCH HANDLERS (Swipe)
+// ============================================
+function setupCardTouchHandlers() {
+  const container = document.getElementById('card-container');
+  if (!container) return;
+
+  container.addEventListener('touchstart', handleCardTouchStart, { passive: true });
+  container.addEventListener('touchmove', handleCardTouchMove, { passive: false });
+  container.addEventListener('touchend', handleCardTouchEnd, { passive: true });
+}
+
+function handleCardTouchStart(e) {
+  if (!isCardFlipped) return; // Only swipe after flip
+
+  const touch = e.touches[0];
+  cardTouchStartX = touch.clientX;
+  cardTouchStartY = touch.clientY;
+  cardTouchDeltaX = 0;
+  isCardSwiping = false;
+
+  const flashcard = document.getElementById('flashcard');
+  flashcard.classList.add('swiping');
+  flashcard.classList.remove('swipe-left', 'swipe-right');
+}
+
+function handleCardTouchMove(e) {
+  if (!isCardFlipped) return;
+
+  const touch = e.touches[0];
+  cardTouchDeltaX = touch.clientX - cardTouchStartX;
+  const deltaY = Math.abs(touch.clientY - cardTouchStartY);
+
+  // Only horizontal swipe
+  if (Math.abs(cardTouchDeltaX) > deltaY && Math.abs(cardTouchDeltaX) > 10) {
+    isCardSwiping = true;
+    e.preventDefault();
+
+    const flashcard = document.getElementById('flashcard');
+    const rotation = cardTouchDeltaX * 0.05;
+    flashcard.style.transform = `translateX(${cardTouchDeltaX}px) rotate(${rotation}deg)`;
+
+    // Show swipe indicators
+    const container = document.getElementById('card-container');
+    if (cardTouchDeltaX < -30) {
+      container.classList.add('swiping-left');
+      container.classList.remove('swiping-right');
+    } else if (cardTouchDeltaX > 30) {
+      container.classList.add('swiping-right');
+      container.classList.remove('swiping-left');
+    } else {
+      container.classList.remove('swiping-left', 'swiping-right');
+    }
+  }
+}
+
+function handleCardTouchEnd() {
+  if (!isCardFlipped) return;
+
+  const flashcard = document.getElementById('flashcard');
+  const container = document.getElementById('card-container');
+
+  flashcard.classList.remove('swiping');
+  container.classList.remove('swiping-left', 'swiping-right');
+
+  if (isCardSwiping) {
+    if (cardTouchDeltaX < -80) {
+      // Swipe left → mark for review
+      flashcard.style.transform = '';
+      swipeCardLeft();
+    } else if (cardTouchDeltaX > 80) {
+      // Swipe right → next card (same as "Узнал")
+      flashcard.style.transform = '';
+      nextCard();
+    } else {
+      // Snap back
+      flashcard.style.transform = '';
+    }
+  } else {
+    flashcard.style.transform = '';
+  }
+
+  isCardSwiping = false;
+}
+
+// ============================================
+// COMPETITION MODE (Online 1v1)
+// ============================================
+let compSocket = null;
+let compState = null;
+let compAnswered = false;
+
+function initCompetitionSocket() {
+  if (compSocket) return compSocket;
+
+  const serverUrl = window.location.hostname === 'localhost'
+    ? 'http://localhost:5000'
+    : 'https://zholrules.onrender.com';
+
+  compSocket = io(serverUrl, {
+    transports: ['websocket', 'polling'],
+    reconnection: true,
+    reconnectionDelay: 1000,
+  });
+
+  compSocket.on('connect', () => {
+    console.log('Competition socket connected');
+  });
+
+  compSocket.on('disconnect', () => {
+    console.log('Competition socket disconnected');
+  });
+
+  compSocket.on('queue_joined', (data) => {
+    console.log('Joined queue:', data);
+    document.getElementById('comp-waiting-status').textContent = data.message;
+  });
+
+  compSocket.on('competition_start', (data) => {
+    console.log('Competition started:', data);
+    startCompGame(data);
+  });
+
+  compSocket.on('competition_answer_result', (data) => {
+    handleCompAnswerResult(data);
+  });
+
+  compSocket.on('competition_score_update', (data) => {
+    document.getElementById('comp-opponent-score').textContent = data.opponent_score;
+  });
+
+  compSocket.on('competition_opponent_finished', (data) => {
+    // Show notification that opponent finished
+    const btn = document.getElementById('comp-next-btn');
+    btn.textContent = '⚡ Закончить быстрее!';
+  });
+
+  compSocket.on('competition_result', (data) => {
+    showCompResult(data);
+  });
+
+  compSocket.on('competition_opponent_left', (data) => {
+    alert(`${data.opponent_name} покинул бой. Ты победил! 🏆`);
+    exitCompetition();
+  });
+
+  compSocket.on('error', (data) => {
+    console.error('Competition error:', data);
+  });
+
+  return compSocket;
+}
+
+function startCompetition() {
+  // Check lives
+  if (state.stats.lives <= 0) {
+    showPaymentModal();
+    return;
+  }
+
+  // Show competition screen
+  document.getElementById('competition-screen').classList.add('active');
+  document.getElementById('comp-waiting').style.display = 'flex';
+  document.getElementById('comp-game').style.display = 'none';
+  document.getElementById('comp-result').style.display = 'none';
+
+  // Connect socket
+  const socket = initCompetitionSocket();
+
+  // Join queue
+  socket.emit('competition_join', {
+    user_id: state.user.id,
+    name: state.user.name || 'Аноним',
+  });
+}
+
+function startCompGame(data) {
+  compState = {
+    competition_id: data.competition_id,
+    questions: data.questions,
+    opponent_name: data.opponent_name,
+    currentIndex: 0,
+    correctCount: 0,
+    answered: false,
+  };
+
+  // Hide waiting, show game
+  document.getElementById('comp-waiting').style.display = 'none';
+  document.getElementById('comp-game').style.display = 'block';
+  document.getElementById('comp-result').style.display = 'none';
+
+  // Set names
+  document.getElementById('comp-your-name').textContent = state.user.name || 'Ты';
+  document.getElementById('comp-opponent-name').textContent = data.opponent_name;
+  document.getElementById('comp-your-score').textContent = '0';
+  document.getElementById('comp-opponent-score').textContent = '0';
+
+  renderCompQuestion();
+}
+
+function renderCompQuestion() {
+  const q = compState.questions[compState.currentIndex];
+  if (!q) return;
+
+  compAnswered = false;
+
+  // Progress
+  const total = compState.questions.length;
+  const pct = (compState.currentIndex / total) * 100;
+  document.getElementById('comp-progress').style.width = `${pct}%`;
+  document.getElementById('comp-counter').textContent = `${compState.currentIndex + 1} / ${total}`;
+
+  // Question
+  document.getElementById('comp-question-text').textContent = q.question;
+
+  // Media
+  const mediaEl = document.getElementById('comp-media');
+  if (q.media_type === 'image' && q.media_url) {
+    mediaEl.innerHTML = `<img src="${q.media_url}" alt="Медиа" loading="lazy">`;
+  } else if (q.media_type === 'video' && q.media_url) {
+    mediaEl.innerHTML = `<video src="${q.media_url}" controls muted></video>`;
+  } else {
+    mediaEl.innerHTML = '';
+  }
+
+  // Options
+  const optionsEl = document.getElementById('comp-options');
+  const markers = ['A', 'B', 'C', 'D', 'E', 'F'];
+
+  optionsEl.innerHTML = q.options.map((opt, idx) => `
+    <div class="comp-option" onclick="selectCompOption(${idx})">
+      <span class="comp-option-marker">${markers[idx]}</span>
+      <span>${opt}</span>
+    </div>
+  `).join('');
+
+  // Hide explanation
+  document.getElementById('comp-explanation').style.display = 'none';
+  document.getElementById('comp-next-btn').disabled = true;
+}
+
+function selectCompOption(index) {
+  if (compAnswered) return;
+  compAnswered = true;
+
+  const q = compState.questions[compState.currentIndex];
+  compState.lastSelected = index;
+
+  // Haptic feedback
+  if (window.Telegram?.WebApp?.HapticFeedback) {
+    Telegram.WebApp.HapticFeedback.impactOccurred('light');
+  }
+
+  // Send answer to server
+  compSocket.emit('competition_answer', {
+    competition_id: compState.competition_id,
+    user_id: state.user.id,
+    question_id: q.id,
+    selected_options: [index],
+  });
+
+  // Disable options while waiting
+  document.querySelectorAll('.comp-option').forEach(opt => opt.classList.add('disabled'));
+}
+
+function handleCompAnswerResult(data) {
+  const q = compState.questions[compState.currentIndex];
+
+  // Mark correct/wrong
+  const options = document.querySelectorAll('.comp-option');
+  options.forEach((opt, idx) => {
+    opt.classList.remove('disabled');
+    if (data.correct_options.includes(idx)) {
+      opt.classList.add('correct');
+    } else if (idx === compState.lastSelected && !data.is_correct) {
+      opt.classList.add('wrong');
+    }
+  });
+
+  // Update score
+  document.getElementById('comp-your-score').textContent = data.your_score;
+  compState.correctCount = data.is_correct ? compState.correctCount + 1 : compState.correctCount;
+
+  // Show explanation
+  if (data.explanation) {
+    document.getElementById('comp-explanation-text').textContent = data.explanation;
+    document.getElementById('comp-explanation').style.display = 'block';
+  }
+
+  // Enable next button
+  document.getElementById('comp-next-btn').disabled = false;
+}
+
+function nextCompQuestion() {
+  compState.currentIndex++;
+
+  if (compState.currentIndex >= compState.questions.length) {
+    // Finished - wait for opponent
+    document.getElementById('comp-next-btn').textContent = 'Ожидание противника...';
+    document.getElementById('comp-next-btn').disabled = true;
+  } else {
+    renderCompQuestion();
+  }
+}
+
+function showCompResult(data) {
+  // Hide game, show result
+  document.getElementById('comp-game').style.display = 'none';
+  document.getElementById('comp-result').style.display = 'block';
+
+  // Set result
+  document.getElementById('comp-result-your-name').textContent = state.user.name || 'Ты';
+  document.getElementById('comp-result-opponent-name').textContent = data.opponent_name;
+  document.getElementById('comp-result-your-score').textContent = data.your_score;
+  document.getElementById('comp-result-opponent-score').textContent = data.opponent_score;
+
+  if (data.is_draw) {
+    document.getElementById('comp-result-emoji').textContent = '🤝';
+    document.getElementById('comp-result-title').textContent = 'Ничья!';
+  } else if (data.is_winner) {
+    document.getElementById('comp-result-emoji').textContent = '🏆';
+    document.getElementById('comp-result-title').textContent = 'Ты победил!';
+  } else {
+    document.getElementById('comp-result-emoji').textContent = '😤';
+    document.getElementById('comp-result-title').textContent = 'Ты проиграл';
+  }
+
+  // Haptic feedback
+  if (window.Telegram?.WebApp?.HapticFeedback) {
+    Telegram.WebApp.HapticFeedback.impactOccurred(data.is_winner ? 'success' : 'error');
+  }
+}
+
+function leaveCompetition() {
+  if (compSocket) {
+    compSocket.emit('competition_leave', {
+      user_id: state.user.id,
+    });
+  }
+  document.getElementById('competition-screen').classList.remove('active');
+}
+
+function exitCompetition() {
+  document.getElementById('competition-screen').classList.remove('active');
+  compState = null;
+  updateUI();
 }
 
 // Close modals on backdrop click

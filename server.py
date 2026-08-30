@@ -14,6 +14,7 @@ from datetime import datetime, date, timedelta
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
+from flask_socketio import SocketIO, emit, join_room, leave_room
 from dotenv import load_dotenv
 from loguru import logger
 from urllib.parse import unquote
@@ -34,6 +35,9 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # CORS — only allow own domains
 CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'https://angelok-5725.github.io').split(',')
 CORS(app, origins=CORS_ORIGINS)
+
+# SocketIO for real-time competition
+socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
 
 # Database — Neon PostgreSQL or SQLite fallback
 database_url = os.getenv('DATABASE_URL', '').strip()
@@ -150,6 +154,64 @@ class Subscription(db.Model):
             'plan': self.plan,
             'is_active': self.is_active,
             'expires_at': self.expires_at.isoformat() if self.expires_at else None,
+        }
+
+
+class Setting(db.Model):
+    __tablename__ = 'settings'
+
+    id = db.Column(db.Integer, primary_key=True)
+    key = db.Column(db.String(50), unique=True, nullable=False)
+    value = db.Column(db.Text, nullable=False)
+    description = db.Column(db.String(200), default='')
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'key': self.key,
+            'value': self.value,
+            'description': self.description,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class Competition(db.Model):
+    __tablename__ = 'competitions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    player1_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    player2_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    status = db.Column(db.String(20), default='waiting')  # waiting, active, finished
+    questions = db.Column(db.Text, nullable=False)  # JSON array of question IDs
+    player1_score = db.Column(db.Integer, default=0)
+    player2_score = db.Column(db.Integer, default=0)
+    player1_correct = db.Column(db.Integer, default=0)
+    player2_correct = db.Column(db.Integer, default=0)
+    winner_id = db.Column(db.Integer, nullable=True)  # user_id of winner, null = draw
+    started_at = db.Column(db.DateTime, nullable=True)
+    finished_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    player1 = db.relationship('User', foreign_keys=[player1_id])
+    player2 = db.relationship('User', foreign_keys=[player2_id])
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'player1_id': self.player1_id,
+            'player2_id': self.player2_id,
+            'player1_name': self.player1.name if self.player1 else '???',
+            'player2_name': self.player2.name if self.player2 else '???',
+            'status': self.status,
+            'player1_score': self.player1_score,
+            'player2_score': self.player2_score,
+            'player1_correct': self.player1_correct,
+            'player2_correct': self.player2_correct,
+            'winner_id': self.winner_id,
+            'started_at': self.started_at.isoformat() if self.started_at else None,
+            'finished_at': self.finished_at.isoformat() if self.finished_at else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
 
@@ -635,6 +697,31 @@ def delete_error(question_id):
     return jsonify({'message': 'Removed from errors'})
 
 
+@app.route('/api/errors/bulk', methods=['POST'])
+@require_auth
+def add_errors_bulk():
+    """Add multiple questions to user's errors (for cards review mode)."""
+    tg_id = request.tg_user['id']
+    user = User.query.filter_by(tg_id=tg_id).first()
+
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    data = request.get_json()
+    question_ids = data.get('question_ids', [])
+
+    added = 0
+    for qid in question_ids:
+        existing = UserError.query.filter_by(user_id=user.id, question_id=qid).first()
+        if not existing:
+            error = UserError(user_id=user.id, question_id=qid)
+            db.session.add(error)
+            added += 1
+
+    db.session.commit()
+    return jsonify({'added': added}), 201
+
+
 # ============================================
 # API: LEADERBOARD
 # ============================================
@@ -764,9 +851,69 @@ def delete_category(cat_id):
 
 
 # ============================================
+# SETTINGS HELPERS
+# ============================================
+
+DEFAULT_SETTINGS = {
+    'pro_stars_price': {'value': '1500', 'description': 'Цена Pro подписки в Telegram Stars'},
+    'free_error_limit': {'value': '10', 'description': 'Максимум ошибок для бесплатного плана'},
+    'max_daily_lives': {'value': '3', 'description': 'Количество жизней в день'},
+    'daily_questions_target': {'value': '10', 'description': 'Цель по вопросам в день'},
+    'exam_questions': {'value': '40', 'description': 'Количество вопросов в экзамене'},
+    'exam_time_minutes': {'value': '40', 'description': 'Время экзамена в минутах'},
+    'mini_game_duration': {'value': '60', 'description': 'Длительность мини-игры в секундах'},
+    'free_plan_enabled': {'value': 'true', 'description': 'Бесплатный план доступен'},
+    'pro_plan_enabled': {'value': 'true', 'description': 'Pro план доступен для покупки'},
+    'lives_stars_price': {'value': '5', 'description': 'Цена +3 жизней в Telegram Stars'},
+}
+
+
+def get_setting(key, default=None):
+    """Get a setting value from the database."""
+    setting = Setting.query.filter_by(key=key).first()
+    if setting:
+        return setting.value
+    if key in DEFAULT_SETTINGS:
+        return DEFAULT_SETTINGS[key]['value']
+    return default
+
+
+def set_setting(key, value, description=''):
+    """Set a setting value in the database."""
+    setting = Setting.query.filter_by(key=key).first()
+    if setting:
+        setting.value = str(value)
+        if description:
+            setting.description = description
+    else:
+        setting = Setting(
+            key=key,
+            value=str(value),
+            description=description or DEFAULT_SETTINGS.get(key, {}).get('description', '')
+        )
+        db.session.add(setting)
+    db.session.commit()
+    return setting
+
+
+def init_default_settings():
+    """Initialize default settings if they don't exist."""
+    for key, data in DEFAULT_SETTINGS.items():
+        if not Setting.query.filter_by(key=key).first():
+            setting = Setting(
+                key=key,
+                value=data['value'],
+                description=data['description']
+            )
+            db.session.add(setting)
+    db.session.commit()
+
+
+# ============================================
 # SUBSCRIPTION HELPERS
 # ============================================
 
+# These will now be read from settings
 FREE_ERROR_LIMIT = 10
 PRO_STARS_PRICE = 1500  # Telegram Stars per month
 
@@ -796,7 +943,60 @@ def get_error_limit(user):
     """Return error limit for user. None = unlimited."""
     if is_pro(user):
         return None  # unlimited
-    return FREE_ERROR_LIMIT
+    # Read from settings DB
+    limit_str = get_setting('free_error_limit', '10')
+    try:
+        return int(limit_str)
+    except (ValueError, TypeError):
+        return 10
+
+
+# ============================================
+# API: SETTINGS (Admin only)
+# ============================================
+@app.route('/api/settings', methods=['GET'])
+@require_auth
+@require_admin
+def get_settings():
+    """Get all settings."""
+    settings = Setting.query.all()
+    return jsonify([s.to_dict() for s in settings])
+
+
+@app.route('/api/settings', methods=['POST'])
+@require_auth
+@require_admin
+def update_settings():
+    """Update multiple settings at once."""
+    data = request.get_json()
+    settings_data = data.get('settings', [])
+
+    updated = 0
+    for item in settings_data:
+        key = item.get('key')
+        value = item.get('value')
+        description = item.get('description', '')
+        if key and value is not None:
+            set_setting(key, value, description)
+            updated += 1
+
+    return jsonify({'updated': updated}), 200
+
+
+@app.route('/api/settings/<key>', methods=['PUT'])
+@require_auth
+@require_admin
+def update_setting(key):
+    """Update a single setting."""
+    data = request.get_json()
+    value = data.get('value')
+    description = data.get('description', '')
+
+    if value is None:
+        return jsonify({'error': 'Value required'}), 400
+
+    setting = set_setting(key, value, description)
+    return jsonify(setting.to_dict()), 200
 
 
 # ============================================
@@ -899,6 +1099,55 @@ def create_invoice():
     })
 
 
+@app.route('/api/payment/invoice-lives', methods=['POST'])
+@require_auth
+def create_lives_invoice():
+    """Create a Telegram Stars invoice link for extra lives."""
+    import requests as http_requests
+
+    tg_id = request.tg_user['id']
+    bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
+    lives_price = int(get_setting('lives_stars_price', '5'))
+
+    if not bot_token:
+        # Dev mode: add lives directly
+        user = User.query.filter_by(tg_id=tg_id).first()
+        if user and user.stats:
+            user.stats.lives += 3
+            db.session.commit()
+        return jsonify({'dev_mode': True, 'lives_added': 3})
+
+    payload = json.dumps({
+        'user_id': tg_id,
+        'product': 'extra_lives',
+        'amount': 3,
+        'timestamp': int(time.time()),
+    })
+
+    resp = http_requests.post(
+        f'https://api.telegram.org/bot{bot_token}/createInvoiceLink',
+        json={
+            'title': 'ZholRules +3 Жизни',
+            'description': '+3 жизни для прохождения экзамена',
+            'payload': payload,
+            'provider_token': '',
+            'currency': 'XTR',
+            'prices': [{'label': '+3 Жизни', 'amount': lives_price}],
+        },
+        timeout=10,
+    )
+
+    data = resp.json()
+    if not data.get('ok'):
+        logger.error(f'Lives invoice failed: {data}')
+        return jsonify({'error': 'Failed to create invoice'}), 500
+
+    return jsonify({
+        'invoice_url': data['result'],
+        'amount': lives_price,
+    })
+
+
 @app.route('/webhook/telegram', methods=['POST'])
 def telegram_webhook():
     """Telegram webhook for payments and other events."""
@@ -920,7 +1169,7 @@ def telegram_webhook():
         user_id = payload.get('user_id', 0)
         product = payload.get('product', '')
 
-        if product != 'pro_subscription':
+        if product not in ('pro_subscription', 'extra_lives'):
             # Reject unknown products
             http_requests.post(
                 f'https://api.telegram.org/bot{bot_token}/answerPreCheckoutQuery',
@@ -982,6 +1231,27 @@ def telegram_webhook():
                 )
             else:
                 logger.error(f'User not found for webhook payment: {user_id}')
+
+        if product == 'extra_lives':
+            lives_amount = payload.get('amount', 3)
+            user = User.query.filter_by(tg_id=user_id).first()
+            if user and user.stats:
+                user.stats.lives += lives_amount
+                db.session.commit()
+
+                logger.info(f'Lives added via webhook: user={user_id} +{lives_amount}')
+
+                http_requests.post(
+                    f'https://api.telegram.org/bot{bot_token}/sendMessage',
+                    json={
+                        'chat_id': user_id,
+                        'text': f'❤️ +{lives_amount} жизней добавлено!\n\n'
+                                f'Теперь у тебя {user.stats.lives} жизней.',
+                    },
+                    timeout=5,
+                )
+            else:
+                logger.error(f'User not found for lives payment: {user_id}')
 
         return jsonify({'ok': True})
 
@@ -1079,6 +1349,10 @@ def init_db():
             db.session.commit()
             logger.info(f'Seeded {len(DEFAULT_CATEGORIES)} default categories')
 
+        # Seed default settings
+        init_default_settings()
+        logger.info('Default settings initialized')
+
         # Seed questions from JSON if empty
         if Question.query.count() == 0:
             questions_file = os.path.join(os.path.dirname(__file__), 'data', 'questions.json')
@@ -1106,6 +1380,321 @@ def init_db():
 
 
 # ============================================
+# SOCKETIO: COMPETITION MODE
+# ============================================
+
+# In-memory matchmaking queue
+waiting_players = []  # list of {user_id, name, sid}
+active_competitions = {}  # competition_id -> {player1, player2, questions, ...}
+
+
+@socketio.on('connect')
+def handle_connect():
+    logger.info(f'Client connected: {request.sid}')
+
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    logger.info(f'Client disconnected: {request.sid}')
+    # Remove from waiting queue
+    global waiting_players
+    waiting_players = [p for p in waiting_players if p.get('sid') != request.sid]
+
+
+@socketio.on('competition_join')
+def handle_competition_join(data):
+    """Player joins the matchmaking queue."""
+    user_id = data.get('user_id')
+    name = data.get('name', 'Аноним')
+
+    if not user_id:
+        emit('error', {'message': 'user_id required'})
+        return
+
+    # Check if already in queue
+    for p in waiting_players:
+        if p['user_id'] == user_id:
+            emit('error', {'message': 'Уже в очереди'})
+            return
+
+    player = {
+        'user_id': user_id,
+        'name': name,
+        'sid': request.sid,
+    }
+
+    waiting_players.append(player)
+    emit('queue_joined', {
+        'position': len(waiting_players),
+        'message': 'Ожидание противника...'
+    })
+
+    logger.info(f'Player joined queue: {name} (id={user_id}). Queue size: {len(waiting_players)}')
+
+    # If 2+ players, start a match
+    if len(waiting_players) >= 2:
+        start_competition_match()
+
+
+def start_competition_match():
+    """Create a match from the first 2 waiting players."""
+    global waiting_players
+
+    p1 = waiting_players.pop(0)
+    p2 = waiting_players.pop(0)
+
+    # Pick 10 random questions
+    all_questions = Question.query.all()
+    if len(all_questions) < 10:
+        question_ids = [q.id for q in all_questions]
+    else:
+        import random
+        selected = random.sample(all_questions, 10)
+        question_ids = [q.id for q in selected]
+
+    # Create competition in DB
+    comp = Competition(
+        player1_id=p1['user_id'],
+        player2_id=p2['user_id'],
+        status='active',
+        questions=json.dumps(question_ids),
+        started_at=datetime.utcnow(),
+    )
+    db.session.add(comp)
+    db.session.commit()
+
+    # Store in memory
+    competition_data = {
+        'id': comp.id,
+        'player1': p1,
+        'player2': p2,
+        'questions': question_ids,
+        'scores': {p1['user_id']: 0, p2['user_id']: 0},
+        'correct': {p1['user_id']: 0, p2['user_id']: 0},
+        'current_q': {p1['user_id']: 0, p2['user_id']: 0},
+    }
+    active_competitions[comp.id] = competition_data
+
+    # Load full question data
+    questions_data = []
+    for qid in question_ids:
+        q = Question.query.get(qid)
+        if q:
+            questions_data.append(q.to_dict())
+
+    # Send start event to both players
+    for player in [p1, p2]:
+        opponent = p2 if player == p1 else p1
+        socketio.emit('competition_start', {
+            'competition_id': comp.id,
+            'opponent_name': opponent['name'],
+            'questions': questions_data,
+            'total_questions': len(questions_data),
+        }, room=player['sid'])
+
+    logger.info(f'Competition started: {p1["name"]} vs {p2["name"]} (id={comp.id})')
+
+
+@socketio.on('competition_answer')
+def handle_competition_answer(data):
+    """Player submits an answer during competition."""
+    competition_id = data.get('competition_id')
+    user_id = data.get('user_id')
+    question_id = data.get('question_id')
+    selected_options = data.get('selected_options', [])
+
+    comp_data = active_competitions.get(competition_id)
+    if not comp_data:
+        emit('error', {'message': 'Competition not found'})
+        return
+
+    # Check answer
+    question = Question.query.get(question_id)
+    if not question:
+        return
+
+    correct = json.loads(question.correct_options)
+    is_correct = sorted(selected_options) == sorted(correct)
+
+    # Update score
+    if is_correct:
+        comp_data['scores'][user_id] = comp_data['scores'].get(user_id, 0) + 1
+        comp_data['correct'][user_id] = comp_data['correct'].get(user_id, 0) + 1
+
+    comp_data['current_q'][user_id] = comp_data['current_q'].get(user_id, 0) + 1
+
+    # Notify opponent about score update
+    opponent_sid = None
+    for player_key in ['player1', 'player2']:
+        if comp_data[player_key]['user_id'] != user_id:
+            opponent_sid = comp_data[player_key]['sid']
+            break
+
+    if opponent_sid:
+        socketio.emit('competition_score_update', {
+            'opponent_score': comp_data['scores'][user_id],
+            'opponent_progress': comp_data['current_q'][user_id],
+        }, room=opponent_sid)
+
+    # Send answer result to player
+    emit('competition_answer_result', {
+        'is_correct': is_correct,
+        'correct_options': correct,
+        'explanation': question.explanation,
+        'your_score': comp_data['scores'][user_id],
+        'next_question_index': comp_data['current_q'][user_id],
+    })
+
+    # Check if player finished all questions
+    if comp_data['current_q'][user_id] >= len(comp_data['questions']):
+        finish_player(competition_id, user_id)
+
+
+def finish_player(competition_id, user_id):
+    """Handle a player finishing all questions."""
+    comp_data = active_competitions.get(competition_id)
+    if not comp_data:
+        return
+
+    # Mark player as finished
+    if 'finished' not in comp_data:
+        comp_data['finished'] = []
+    comp_data['finished'].append(user_id)
+
+    # Check if both finished
+    if len(comp_data['finished']) >= 2:
+        finish_competition(competition_id)
+    else:
+        # Notify opponent that this player finished
+        for player_key in ['player1', 'player2']:
+            if comp_data[player_key]['user_id'] != user_id:
+                socketio.emit('competition_opponent_finished', {
+                    'opponent_name': comp_data[player_key]['name'],
+                }, room=comp_data[player_key]['sid'])
+
+
+def finish_competition(competition_id):
+    """Finalize the competition and determine winner."""
+    comp_data = active_competitions.get(competition_id)
+    if not comp_data:
+        return
+
+    p1_id = comp_data['player1']['user_id']
+    p2_id = comp_data['player2']['user_id']
+
+    p1_score = comp_data['scores'].get(p1_id, 0)
+    p2_score = comp_data['scores'].get(p2_id, 0)
+
+    # Determine winner
+    if p1_score > p2_score:
+        winner_id = p1_id
+    elif p2_score > p1_score:
+        winner_id = p2_id
+    else:
+        winner_id = None  # Draw
+
+    # Update DB
+    comp = Competition.query.get(competition_id)
+    if comp:
+        comp.player1_score = p1_score
+        comp.player2_score = p2_score
+        comp.player1_correct = comp_data['correct'].get(p1_id, 0)
+        comp.player2_correct = comp_data['correct'].get(p2_id, 0)
+        comp.winner_id = winner_id
+        comp.status = 'finished'
+        comp.finished_at = datetime.utcnow()
+        db.session.commit()
+
+    # Notify both players
+    for player_key in ['player1', 'player2']:
+        player = comp_data[player_key]
+        opponent = comp_data['player2'] if player_key == 'player1' else comp_data['player1']
+        player_score = comp_data['scores'].get(player['user_id'], 0)
+        opponent_score = comp_data['scores'].get(opponent['user_id'], 0)
+
+        socketio.emit('competition_result', {
+            'competition_id': competition_id,
+            'your_score': player_score,
+            'opponent_score': opponent_score,
+            'opponent_name': opponent['name'],
+            'is_winner': winner_id == player['user_id'],
+            'is_draw': winner_id is None,
+        }, room=player['sid'])
+
+    # Cleanup
+    del active_competitions[competition_id]
+    logger.info(f'Competition finished: id={competition_id} winner={winner_id}')
+
+
+@socketio.on('competition_leave')
+def handle_competition_leave(data):
+    """Player leaves the queue or competition."""
+    user_id = data.get('user_id')
+    competition_id = data.get('competition_id')
+
+    # Remove from waiting queue
+    global waiting_players
+    waiting_players = [p for p in waiting_players if p['user_id'] != user_id]
+
+    # If in active competition, opponent wins
+    if competition_id and competition_id in active_competitions:
+        comp_data = active_competitions[competition_id]
+        for player_key in ['player1', 'player2']:
+            if comp_data[player_key]['user_id'] == user_id:
+                opponent = comp_data['player2'] if player_key == 'player1' else comp_data['player1']
+                socketio.emit('competition_opponent_left', {
+                    'opponent_name': comp_data[player_key]['name'],
+                }, room=opponent['sid'])
+                break
+
+
+# ============================================
+# API: COMPETITIONS
+# ============================================
+@app.route('/api/competitions', methods=['GET'])
+@require_auth
+def get_competitions():
+    """Get user's competition history."""
+    tg_id = request.tg_user['id']
+    user = User.query.filter_by(tg_id=tg_id).first()
+    if not user:
+        return jsonify([])
+
+    comps = Competition.query.filter(
+        (Competition.player1_id == user.id) | (Competition.player2_id == user.id)
+    ).order_by(Competition.created_at.desc()).limit(20).all()
+
+    return jsonify([c.to_dict() for c in comps])
+
+
+@app.route('/api/competitions/stats', methods=['GET'])
+@require_auth
+def get_competition_stats():
+    """Get user's competition statistics."""
+    tg_id = request.tg_user['id']
+    user = User.query.filter_by(tg_id=tg_id).first()
+    if not user:
+        return jsonify({})
+
+    total = Competition.query.filter(
+        (Competition.player1_id == user.id) | (Competition.player2_id == user.id)
+    ).filter_by(status='finished').count()
+
+    wins = Competition.query.filter_by(winner_id=user.id, status='finished').count()
+
+    draws = Competition.query.filter(
+        (Competition.player1_id == user.id) | (Competition.player2_id == user.id)
+    ).filter_by(status='finished', winner_id=None).count()
+
+    return jsonify({
+        'total': total,
+        'wins': wins,
+        'losses': total - wins - draws,
+        'draws': draws,
+    })
+
+
+# ============================================
 # INIT DB ON STARTUP (works with gunicorn too)
 # ============================================
 with app.app_context():
@@ -1119,9 +1708,10 @@ if __name__ == '__main__':
     os.makedirs('logs', exist_ok=True)
     logger.add('logs/zholrules.log', rotation='10 MB', level=os.getenv('LOG_LEVEL', 'INFO'))
 
-    # Run server
+    # Run server with SocketIO
     port = int(os.getenv('PORT', 5000))
     debug = os.getenv('FLASK_DEBUG', '0') == '1'
 
     logger.info(f'ZholRules server starting on port {port}')
+    socketio.run(app, host='0.0.0.0', port=port, debug=debug)
     app.run(host='0.0.0.0', port=port, debug=debug)
