@@ -2008,6 +2008,23 @@ function showCardsScreen() {
 
   renderCard();
   setupCardTouchHandlers();
+  setupCardsOptionDelegation();
+}
+
+function setupCardsOptionDelegation() {
+  const optionsEl = document.getElementById('cards-options');
+  // Remove old listener if any
+  optionsEl.removeEventListener('click', handleCardsOptionClick);
+  optionsEl.addEventListener('click', handleCardsOptionClick);
+}
+
+function handleCardsOptionClick(e) {
+  const option = e.target.closest('.cards-option');
+  if (!option || option.classList.contains('disabled')) return;
+  const idx = parseInt(option.dataset.index);
+  if (!isNaN(idx)) {
+    selectCardOption(idx);
+  }
 }
 
 function renderCard() {
@@ -2051,7 +2068,7 @@ function renderCard() {
   const markers = ['A', 'B', 'C', 'D', 'E', 'F'];
 
   optionsEl.innerHTML = q.options.map((opt, idx) => `
-    <div class="cards-option" onclick="selectCardOption(${idx})">
+    <div class="cards-option" data-index="${idx}">
       <span class="cards-option-marker">${markers[idx]}</span>
       <span>${opt}</span>
     </div>
