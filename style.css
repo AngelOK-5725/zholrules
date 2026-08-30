@@ -1509,7 +1509,6 @@ textarea.input-field {
   justify-content: center;
   perspective: 1000px;
   margin-bottom: 20px;
-  touch-action: none;
   overflow: hidden;
   min-height: 300px;
 }
@@ -1521,7 +1520,6 @@ textarea.input-field {
   position: relative;
   transform-style: preserve-3d;
   transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-  cursor: grab;
   flex-shrink: 0;
 }
 
@@ -1643,6 +1641,8 @@ textarea.input-field {
   flex-direction: column;
   gap: 10px;
   margin-bottom: 12px;
+  position: relative;
+  z-index: 10;
 }
 
 .cards-option {
@@ -1657,6 +1657,9 @@ textarea.input-field {
   font-size: 15px;
   background: var(--tg-theme-bg-color);
   min-height: 50px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
 
 .cards-option:active {

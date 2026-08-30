@@ -1977,6 +1977,7 @@ let cardTouchStartY = 0;
 let cardTouchDeltaX = 0;
 let isCardSwiping = false;
 let isCardFlipped = false;
+let cardSwipeStarted = false;
 
 function startCards() {
   // Check lives
@@ -2193,37 +2194,47 @@ function handleCardTouchStart(e) {
   cardTouchStartY = touch.clientY;
   cardTouchDeltaX = 0;
   isCardSwiping = false;
+  cardSwipeStarted = false;
 
   const flashcard = document.getElementById('flashcard');
-  flashcard.classList.add('swiping');
-  flashcard.classList.remove('swipe-left', 'swipe-right');
+  if (flashcard) {
+    flashcard.classList.add('swiping');
+    flashcard.classList.remove('swipe-left', 'swipe-right');
+  }
 }
 
 function handleCardTouchMove(e) {
+  if (!cardSwipeStarted) {
+    const touch = e.touches[0];
+    const deltaX = Math.abs(touch.clientX - cardTouchStartX);
+    const deltaY = Math.abs(touch.clientY - cardTouchStartY);
+    // Start swiping only after clear horizontal movement
+    if (deltaX > 15 && deltaX > deltaY * 1.5) {
+      cardSwipeStarted = true;
+    }
+  }
+
+  if (!cardSwipeStarted) return;
+
   const touch = e.touches[0];
   cardTouchDeltaX = touch.clientX - cardTouchStartX;
-  const deltaY = Math.abs(touch.clientY - cardTouchStartY);
 
-  // Only horizontal swipe
-  if (Math.abs(cardTouchDeltaX) > deltaY && Math.abs(cardTouchDeltaX) > 10) {
-    isCardSwiping = true;
-    e.preventDefault();
+  e.preventDefault();
 
-    const flashcard = document.getElementById('flashcard');
-    const rotation = cardTouchDeltaX * 0.05;
-    flashcard.style.transform = `translateX(${cardTouchDeltaX}px) rotate(${rotation}deg)`;
+  const flashcard = document.getElementById('flashcard');
+  const rotation = cardTouchDeltaX * 0.05;
+  flashcard.style.transform = `translateX(${cardTouchDeltaX}px) rotate(${rotation}deg)`;
 
-    // Show swipe indicators
-    const container = document.getElementById('card-container');
-    if (cardTouchDeltaX < -30) {
-      container.classList.add('swiping-left');
-      container.classList.remove('swiping-right');
-    } else if (cardTouchDeltaX > 30) {
-      container.classList.add('swiping-right');
-      container.classList.remove('swiping-left');
-    } else {
-      container.classList.remove('swiping-left', 'swiping-right');
-    }
+  // Show swipe indicators
+  const container = document.getElementById('card-container');
+  if (cardTouchDeltaX < -30) {
+    container.classList.add('swiping-left');
+    container.classList.remove('swiping-right');
+  } else if (cardTouchDeltaX > 30) {
+    container.classList.add('swiping-right');
+    container.classList.remove('swiping-left');
+  } else {
+    container.classList.remove('swiping-left', 'swiping-right');
   }
 }
 
@@ -2234,7 +2245,7 @@ function handleCardTouchEnd() {
   flashcard.classList.remove('swiping');
   container.classList.remove('swiping-left', 'swiping-right');
 
-  if (isCardSwiping) {
+  if (cardSwipeStarted && Math.abs(cardTouchDeltaX) > 10) {
     if (cardTouchDeltaX < -80) {
       // Swipe left → mark for review
       flashcard.style.transform = '';
