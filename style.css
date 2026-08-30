@@ -299,10 +299,11 @@ textarea.input-field {
 
 .streak-badge, .lives-badge {
   font-size: 14px;
-  font-weight: 600;
-  padding: 4px 10px;
-  border-radius: var(--radius-xl);
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 20px;
   background: var(--tg-theme-secondary-bg-color);
+  box-shadow: var(--shadow-sm);
 }
 
 /* --- Tabs --- */
@@ -320,36 +321,52 @@ textarea.input-field {
 /* --- Progress Card --- */
 .progress-card {
   background: linear-gradient(135deg, #FFB300 0%, #FF8F00 100%);
-  border-radius: var(--radius-lg);
-  padding: 20px;
-  margin-bottom: 20px;
+  border-radius: var(--radius-xl);
+  padding: 24px;
+  margin-bottom: 24px;
   color: #000;
+  position: relative;
+  overflow: hidden;
+}
+
+.progress-card::after {
+  content: '';
+  position: absolute;
+  top: -20px;
+  right: -20px;
+  width: 100px;
+  height: 100px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 50%;
 }
 
 .progress-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .progress-header h3 {
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 20px;
+  font-weight: 800;
 }
 
 .streak-text {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
+  background: rgba(0,0,0,0.1);
+  padding: 4px 12px;
+  border-radius: 20px;
 }
 
 .progress-bar-container {
   width: 100%;
-  height: 8px;
+  height: 10px;
   background: rgba(0,0,0,0.15);
-  border-radius: 4px;
+  border-radius: 5px;
   overflow: hidden;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 .progress-bar {
@@ -441,32 +458,31 @@ textarea.input-field {
   font-size: 18px;
   font-weight: 700;
   margin: 24px 0 12px;
+  color: var(--tg-theme-text-color);
 }
 
 /* --- Mode Grid --- */
 .mode-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-.mode-card:last-child:nth-child(odd) {
-  grid-column: 1 / -1;
-  max-width: 50%;
-  justify-self: center;
+  gap: 14px;
 }
 
 .mode-card {
   background: var(--tg-theme-section-bg-color, var(--tg-theme-secondary-bg-color));
-  border-radius: var(--radius-md);
-  padding: 20px 16px;
+  border-radius: var(--radius-lg);
+  padding: 24px 16px;
   text-align: center;
   cursor: pointer;
   transition: all 0.2s;
   border: 2px solid transparent;
-  /* Touch targets */
-  min-height: 100px;
+  min-height: 110px;
   -webkit-touch-callout: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .mode-card:hover {
@@ -480,18 +496,18 @@ textarea.input-field {
 }
 
 .mode-icon {
-  font-size: 36px;
-  margin-bottom: 8px;
+  font-size: 40px;
 }
 
 .mode-title {
-  font-size: 15px;
-  font-weight: 600;
-  margin-bottom: 4px;
+  font-size: 16px;
+  font-weight: 700;
 }
 
 .mode-desc {
-  font-size: 12px;
+  font-size: 13px;
+  color: var(--tg-theme-hint-color);
+}
   color: var(--tg-theme-hint-color);
 }
 
@@ -505,25 +521,26 @@ textarea.input-field {
 .category-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
+  gap: 14px;
+  padding: 16px 18px;
   background: var(--tg-theme-secondary-bg-color);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   cursor: pointer;
   transition: all 0.2s;
-  min-height: 52px;
+  min-height: 56px;
   -webkit-touch-callout: none;
 }
 
 .category-item:hover {
   transform: translateX(4px);
   background: var(--amber-light);
+  box-shadow: var(--shadow-sm);
 }
 
 .category-icon {
-  font-size: 28px;
-  width: 44px;
-  height: 44px;
+  font-size: 30px;
+  width: 48px;
+  height: 48px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -703,48 +720,55 @@ textarea.input-field {
 /* --- Profile --- */
 .profile-header {
   text-align: center;
-  padding: 24px 0;
+  padding: 32px 0 24px;
 }
 
 .avatar {
-  width: 80px;
-  height: 80px;
-  font-size: 40px;
-  background: var(--tg-theme-secondary-bg-color);
+  width: 96px;
+  height: 96px;
+  font-size: 48px;
+  background: linear-gradient(135deg, var(--amber-light) 0%, var(--amber) 100%);
   border-radius: var(--radius-full);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 0 auto 12px;
-  border: 3px solid var(--amber);
+  margin: 0 auto 16px;
+  border: 4px solid var(--amber);
+  box-shadow: 0 4px 20px rgba(255, 179, 0, 0.3);
 }
 
 .profile-header h2 {
-  font-size: 22px;
-  font-weight: 700;
+  font-size: 24px;
+  font-weight: 800;
 }
 
 .profile-header p {
-  font-size: 14px;
+  font-size: 15px;
   color: var(--tg-theme-hint-color);
+  margin-top: 4px;
 }
 
 .stats-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-bottom: 24px;
+  gap: 14px;
+  margin-bottom: 28px;
 }
 
 .stat-card {
   background: var(--tg-theme-secondary-bg-color);
-  border-radius: var(--radius-md);
-  padding: 16px;
+  border-radius: var(--radius-lg);
+  padding: 20px 16px;
   text-align: center;
+  transition: transform 0.2s;
+}
+
+.stat-card:active {
+  transform: scale(0.97);
 }
 
 .stat-value {
-  font-size: 28px;
+  font-size: 32px;
   font-weight: 800;
   color: var(--amber);
 }
@@ -801,18 +825,19 @@ textarea.input-field {
 
 /* Subscription Card */
 .sub-card {
-  padding: 16px;
-  border-radius: 12px;
+  padding: 20px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--tg-theme-hint-color);
 }
 
 .sub-pro {
   background: linear-gradient(135deg, rgba(108,74,255,0.15), rgba(248,180,0,0.1));
-  border-color: var(--primary);
+  border-color: var(--amber);
+  border-width: 2px;
 }
 
 .sub-free {
-  background: var(--tg-theme-bg-color);
+  background: var(--tg-theme-secondary-bg-color);
 }
 
 .sub-warn {
