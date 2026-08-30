@@ -88,7 +88,7 @@ body {
   background: var(--tg-theme-bg-color);
   color: var(--tg-theme-text-color);
   min-height: 100vh;
-  overflow: visible;
+  overflow: hidden;
   -webkit-overflow-scrolling: touch;
   padding-bottom: calc(var(--nav-height) + var(--safe-bottom));
   transition: background 0.3s, color 0.3s;
@@ -120,6 +120,7 @@ input, textarea, .quiz-question-text {
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  overflow: hidden;
 }
 
 .splash-content {
