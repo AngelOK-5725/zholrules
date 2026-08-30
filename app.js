@@ -30,7 +30,7 @@ const LANGUAGES = {
     quick_start: '⚡ Быстрый старт — Экзамен',
     training_modes: 'Режимы обучения',
     random_mix: 'Случайный микс',
-    by_topics: 'По темам',
+
     speccon: 'Как в СпецЦОНе',
     my_errors: 'Мои ошибки',
     cards_mode: 'Карточки',
@@ -121,7 +121,7 @@ const LANGUAGES = {
     quick_start: '⚡ Birinshi baspa — Imtihan',
     training_modes: 'Oqutu ruuderi',
     random_mix: 'Keditti aralas',
-    by_topics: 'Taqyryp boyinsha',
+
     speccon: 'SpezCON sekin',
     my_errors: 'Meni qatelerim',
     categories: 'Sanattar',
@@ -1181,27 +1181,6 @@ function updateTimerDisplay() {
 // ============================================
 // TOPIC PICKER
 // ============================================
-function showTopicPicker() {
-  const modal = document.getElementById('topic-modal');
-  modal.style.display = 'flex';
-
-  const list = document.getElementById('topic-list');
-  list.innerHTML = questionsData.categories.map(cat => {
-    const count = questionsData.questions.filter(q => q.category === cat.id).length;
-    return `
-      <div class="topic-item" onclick="startQuiz('topic', '${cat.id}'); closeTopicModal();">
-        <span class="topic-item-icon">${cat.icon}</span>
-        <span class="topic-item-name">${cat.name}</span>
-        <span class="topic-item-count">${count}</span>
-      </div>
-    `;
-  }).join('');
-}
-
-function closeTopicModal() {
-  document.getElementById('topic-modal').style.display = 'none';
-}
-
 // ============================================
 // MINI GAME: SIGN RUSH
 // ============================================
