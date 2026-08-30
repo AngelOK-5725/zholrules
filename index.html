@@ -106,11 +106,6 @@
           <div class="mode-title">Случайный микс</div>
           <div class="mode-desc">20 вопросов</div>
         </div>
-        <div class="mode-card" onclick="startCards()">
-          <div class="mode-icon">🃏</div>
-          <div class="mode-title">Карточки</div>
-          <div class="mode-desc">Учи правила</div>
-        </div>
         <div class="mode-card" onclick="startExam()">
           <div class="mode-icon">🏛️</div>
           <div class="mode-title">Как в СпецЦОНе</div>
@@ -465,82 +460,6 @@
       <div class="result-actions">
         <button class="btn btn-primary" onclick="retryQuiz()">🔄 Повторить</button>
         <button class="btn btn-secondary" onclick="exitQuiz()">🏠 На главную</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Cards Screen (overlay) -->
-  <div id="cards-screen" class="screen">
-    <div class="quiz-header">
-      <button class="btn-back" onclick="exitCards()">✕</button>
-      <div class="quiz-progress-bar">
-        <div class="quiz-progress" id="cards-progress" style="width: 0%"></div>
-      </div>
-      <span class="quiz-counter" id="cards-counter">1 / 20</span>
-    </div>
-
-    <div class="cards-content">
-      <!-- Swipe hint -->
-      <div class="cards-hint" id="cards-hint">
-        <span class="cards-hint-left">← Для повторения</span>
-        <span class="cards-hint-right">Узнал →</span>
-      </div>
-
-      <!-- Card container with touch handling -->
-      <div class="card-container" id="card-container">
-        <div class="flashcard" id="flashcard">
-          <!-- Front side -->
-          <div class="flashcard-front">
-            <div class="flashcard-category" id="card-category"></div>
-            <div class="flashcard-question" id="card-question"></div>
-            <div class="flashcard-media" id="card-media"></div>
-            <div class="flashcard-hint">Выбери ответ ниже</div>
-          </div>
-          <!-- Back side -->
-          <div class="flashcard-back">
-            <div class="flashcard-back-header">
-              <span id="card-result-icon">✅</span>
-              <span id="card-result-text">Правильно!</span>
-            </div>
-            <div class="flashcard-back-answer" id="card-correct-answer"></div>
-            <div class="flashcard-back-explanation" id="card-explanation"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Answer options -->
-      <div class="cards-options" id="cards-options">
-        <!-- Filled by JS -->
-      </div>
-
-      <!-- Card actions after flip -->
-      <div class="cards-actions" id="cards-actions" style="display:none;">
-        <button class="btn btn-secondary cards-action-btn" onclick="swipeCardLeft()">
-          📝 Для повторения
-        </button>
-        <button class="btn btn-primary cards-action-btn" onclick="nextCard()">
-          Далее →
-        </button>
-      </div>
-    </div>
-
-    <!-- Cards result -->
-    <div class="quiz-result" id="cards-result" style="display:none;">
-      <div class="result-emoji">🃏</div>
-      <h2>Карточки пройдены!</h2>
-      <div class="result-stats">
-        <div class="result-stat">
-          <span class="result-stat-value" id="cards-correct-count">0</span>
-          <span class="result-stat-label">Запомнил</span>
-        </div>
-        <div class="result-stat">
-          <span class="result-stat-value" id="cards-review-count">0</span>
-          <span class="result-stat-label">Для повторения</span>
-        </div>
-      </div>
-      <div class="result-actions">
-        <button class="btn btn-primary" onclick="startCards()">🔄 Ещё раз</button>
-        <button class="btn btn-secondary" onclick="exitCards()">🏠 На главную</button>
       </div>
     </div>
   </div>
