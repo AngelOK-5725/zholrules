@@ -578,8 +578,8 @@ function selectGoal(goal) {
     card.style.borderColor = 'transparent';
     card.style.background = '';
   });
-  event.currentTarget.style.borderColor = 'var(--amber)';
-  event.currentTarget.style.background = 'var(--amber-light)';
+  event.currentTarget.style.borderColor = 'var(--primary)';
+  event.currentTarget.style.background = 'var(--primary-light)';
 
   setTimeout(() => nextOnboardingStep(), 300);
 }
@@ -619,17 +619,49 @@ function updateUI() {
   document.getElementById('streak-badge').textContent = `🔥 ${state.stats.streak}`;
   document.getElementById('lives-badge').textContent = `❤️ ${state.stats.lives}`;
 
+  // Welcome
+  const homeName = document.getElementById('home-user-name');
+  if (homeName) homeName.textContent = state.user.name || 'друг';
+
   // Daily progress
   const progress = Math.min(100, (state.stats.dailyAnswered / DAILY_QUESTIONS_TARGET) * 100);
   document.getElementById('daily-progress').style.width = `${progress}%`;
   document.getElementById('daily-progress-text').textContent = `${state.stats.dailyAnswered} / ${DAILY_QUESTIONS_TARGET} вопросов сегодня`;
   document.getElementById('daily-streak').textContent = state.stats.streak;
 
+  // Continue card
+  const total = state.stats.totalAnswered;
+  const correct = state.stats.totalCorrect;
+  const overallPct = total > 0 ? Math.round((correct / total) * 100) : 0;
+  const continueProgress = document.getElementById('continue-progress');
+  const continuePct = document.getElementById('continue-pct');
+  if (continueProgress) continueProgress.style.width = `${overallPct}%`;
+  if (continuePct) continuePct.textContent = `${overallPct}% пройдено`;
+
+  // Progress overview
+  const overallPctEl = document.getElementById('overall-pct');
+  if (overallPctEl) overallPctEl.textContent = `${overallPct}%`;
+  const accuracyBar = document.getElementById('accuracy-bar');
+  if (accuracyBar) accuracyBar.style.width = `${overallPct}%`;
+  const accuracyPct = document.getElementById('accuracy-pct');
+  if (accuracyPct) accuracyPct.textContent = `${overallPct}%`;
+  const questionsBar = document.getElementById('questions-bar');
+  if (questionsBar) questionsBar.style.width = `${Math.min(100, (total / 500) * 100)}%`;
+  const questionsCount = document.getElementById('questions-count');
+  if (questionsCount) questionsCount.textContent = total;
+  const streakBar = document.getElementById('streak-bar');
+  if (streakBar) streakBar.style.width = `${Math.min(100, (state.stats.streak / 30) * 100)}%`;
+  const streakCount = document.getElementById('streak-count');
+  if (streakCount) streakCount.textContent = `🔥 ${state.stats.streak}`;
+  const progressChange = document.getElementById('progress-change');
+  if (progressChange) progressChange.textContent = state.stats.streak > 0 ? `+${state.stats.streak} дней подряд 🔥` : '';
+
   // Errors count
   document.getElementById('errors-count').textContent = `${state.errors.length} вопросов`;
 
   // Categories
   renderCategories();
+  renderStudyCategories();
 
   // Profile
   updateProfile();
@@ -656,20 +688,53 @@ function renderCategories() {
   }).join('');
 }
 
+function renderStudyCategories() {
+  const container = document.getElementById('study-categories-list');
+  if (!container || !questionsData || !questionsData.categories) return;
+
+  container.innerHTML = questionsData.categories.map(cat => {
+    const count = questionsData.questions.filter(q => q.category === cat.id).length;
+    const catStats = state.categoryStats[cat.id] || { total: 0, correct: 0 };
+    const pct = catStats.total > 0 ? Math.round((catStats.correct / catStats.total) * 100) : 0;
+    return `
+      <div class="category-item" onclick="startQuiz('topic', '${cat.id}')">
+        <div class="category-icon" style="background: ${cat.color}20; color: ${cat.color};">
+          ${cat.icon}
+        </div>
+        <div class="category-info">
+          <div class="category-name">${cat.name}</div>
+          <div class="category-count">${count} вопросов · ${pct}% верно</div>
+        </div>
+        <span class="category-arrow">›</span>
+      </div>
+    `;
+  }).join('');
+}
+
 function updateProfile() {
   document.getElementById('profile-name').textContent = state.user.name || 'Пользователь';
 
   const goalLabels = { newbie: '🌱 Новичок', refresh: '🔄 Освежаю знания', exam: '📋 Готовлюсь к экзамену' };
   document.getElementById('profile-status').textContent = goalLabels[state.user.goal] || '🌱 Новичок';
 
-  // Stats
+  // Level system
   const total = state.stats.totalAnswered;
   const correct = state.stats.totalCorrect;
   const pct = total > 0 ? Math.round((correct / total) * 100) : 0;
+  const level = Math.floor(total / 50) + 1;
+  const levelEmojis = ['🚗', '🛞', '🚦', '🏁'];
+  const levelEmoji = levelEmojis[Math.min(level - 1, levelEmojis.length - 1)];
+  const levelNames = ['Новичок', 'Уверенный водитель', 'Знаток ПДД', 'Эксперт'];
+  const levelName = levelNames[Math.min(level - 1, levelNames.length - 1)];
+  document.getElementById('level-badge').textContent = `${levelEmoji} Уровень ${level} · ${levelName}`;
 
+  // Stats
   document.getElementById('stat-total').textContent = total;
   document.getElementById('stat-correct').textContent = `${pct}%`;
   document.getElementById('stat-streak').textContent = state.stats.streak;
+
+  // Achievements
+  renderAchievements();
 
   // Category progress
   const catContainer = document.getElementById('category-progress');
@@ -703,6 +768,34 @@ function updateProfile() {
 
   applyTheme();
   applyTranslations();
+}
+
+function renderAchievements() {
+  const container = document.getElementById('achievements-grid');
+  if (!container) return;
+
+  const total = state.stats.totalAnswered;
+  const correct = state.stats.totalCorrect;
+  const pct = total > 0 ? Math.round((correct / total) * 100) : 0;
+
+  const achievements = [
+    { icon: '📝', name: 'Первые шаги', desc: 'Ответить на 10 вопросов', unlocked: total >= 10 },
+    { icon: '🔥', name: 'В ударе', desc: 'Серия 3 дня подряд', unlocked: state.stats.streak >= 3 },
+    { icon: '💯', name: 'Сотня', desc: '100 правильных ответов', unlocked: correct >= 100 },
+    { icon: '🏆', name: 'Знаток', desc: 'Точность 90%+', unlocked: pct >= 90 && total >= 20 },
+    { icon: '📚', name: 'Энтузиаст', desc: '100 вопросов', unlocked: total >= 100 },
+    { icon: '⚡', name: 'Молния', desc: '500 вопросов', unlocked: total >= 500 },
+  ];
+
+  container.innerHTML = achievements.map(a => `
+    <div class="achievement-card ${a.unlocked ? 'unlocked' : 'locked'}">
+      <span class="achievement-icon">${a.icon}</span>
+      <div class="achievement-info">
+        <div class="achievement-name">${a.name}</div>
+        <div class="achievement-desc">${a.desc}</div>
+      </div>
+    </div>
+  `).join('');
 }
 
 // ============================================
