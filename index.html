@@ -194,10 +194,6 @@
           <div class="stat-value" id="stat-streak">0</div>
           <div class="stat-label">🔥 Стрик дней</div>
         </div>
-        <div class="stat-card">
-          <div class="stat-value" id="stat-stars">0</div>
-          <div class="stat-label">⭐ Stars</div>
-        </div>
       </div>
 
       <div class="profile-section">
@@ -228,13 +224,6 @@
             <span>Тёмная тема</span>
             <label class="switch">
               <input type="checkbox" id="dark-mode-toggle" onchange="toggleDarkMode()">
-              <span class="slider"></span>
-            </label>
-          </div>
-          <div class="setting-item">
-            <span>Звуки</span>
-            <label class="switch">
-              <input type="checkbox" id="sounds-toggle" checked onchange="toggleSounds()">
               <span class="slider"></span>
             </label>
           </div>
@@ -413,12 +402,8 @@
         <span class="nav-icon">🏠</span>
         <span class="nav-label">Главная</span>
       </button>
-      <button class="nav-btn" data-tab="game" onclick="switchTab('game')">
-        <span class="nav-icon">🎮</span>
-        <span class="nav-label">Мини-игра</span>
-      </button>
       <button class="nav-btn" data-tab="profile" onclick="switchTab('profile')">
-        <span class="nav-icon">📊</span>
+        <span class="nav-icon">👤</span>
         <span class="nav-label">Профиль</span>
       </button>
       <button class="nav-btn" data-tab="admin" id="admin-tab-btn" style="display:none;" onclick="switchTab('admin')">

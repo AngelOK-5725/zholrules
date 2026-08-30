@@ -342,7 +342,7 @@ let state = {
   subscription: null,  // { plan, is_pro, error_limit, error_count, errors_remaining }
   settings: {
     darkMode: false,
-    sounds: true,
+    // sounds removed
   },
   onboardingDone: false,
 };
@@ -678,7 +678,6 @@ function updateProfile() {
   document.getElementById('stat-total').textContent = total;
   document.getElementById('stat-correct').textContent = `${pct}%`;
   document.getElementById('stat-streak').textContent = state.stats.streak;
-  document.getElementById('stat-stars').textContent = state.stats.stars;
 
   // Category progress
   const catContainer = document.getElementById('category-progress');
@@ -705,7 +704,6 @@ function updateProfile() {
 
   // Settings
   document.getElementById('dark-mode-toggle').checked = state.settings.darkMode;
-  document.getElementById('sounds-toggle').checked = state.settings.sounds;
   document.getElementById('lang-select').value = currentLang;
 
   // Subscription card
@@ -1720,11 +1718,6 @@ function buyNoAds() {
 function toggleDarkMode() {
   state.settings.darkMode = document.getElementById('dark-mode-toggle').checked;
   applyTheme();
-  saveState();
-}
-
-function toggleSounds() {
-  state.settings.sounds = document.getElementById('sounds-toggle').checked;
   saveState();
 }
 
