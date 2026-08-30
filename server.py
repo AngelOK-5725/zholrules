@@ -865,6 +865,10 @@ DEFAULT_SETTINGS = {
     'free_plan_enabled': {'value': 'true', 'description': 'Бесплатный план доступен'},
     'pro_plan_enabled': {'value': 'true', 'description': 'Pro план доступен для покупки'},
     'lives_stars_price': {'value': '5', 'description': 'Цена +3 жизней в Telegram Stars'},
+    'discount_enabled': {'value': 'false', 'description': 'Скидка включена'},
+    'discount_percent': {'value': '0', 'description': 'Размер скидки (%)'},
+    'discount_price': {'value': '0', 'description': 'Цена со скидкой (Stars)'},
+    'discount_expires': {'value': '', 'description': 'Дата окончания скидки (YYYY-MM-DD)'},
 }
 
 
@@ -1015,14 +1019,35 @@ def get_subscription():
     error_count = UserError.query.filter_by(user_id=user.id).count()
     error_limit = get_error_limit(user)
 
+    # Calculate current Pro price (with discount)
+    pro_price = PRO_STARS_PRICE
+    discount_enabled = get_setting('discount_enabled', 'false') == 'true'
+    discount_price = int(get_setting('discount_price', '0'))
+    discount_expires = get_setting('discount_expires', '')
+    discount_percent = int(get_setting('discount_percent', '0'))
+
+    if discount_enabled and discount_price > 0:
+        if discount_expires:
+            try:
+                expires_date = datetime.strptime(discount_expires, '%Y-%m-%d').date()
+                if date.today() <= expires_date:
+                    pro_price = discount_price
+            except ValueError:
+                pass
+        else:
+            pro_price = discount_price
+
     return jsonify({
         'plan': sub.plan,
         'is_active': sub.is_active,
         'expires_at': sub.expires_at.isoformat() if sub.expires_at else None,
         'is_pro': is_pro(user),
         'error_count': error_count,
-        'error_limit': error_limit,  # None = unlimited
+        'error_limit': error_limit,
         'errors_remaining': None if error_limit is None else max(0, error_limit - error_count),
+        'pro_price': pro_price,
+        'discount_active': discount_enabled and pro_price < PRO_STARS_PRICE,
+        'discount_percent': discount_percent if discount_enabled else 0,
     })
 
 
@@ -1065,6 +1090,25 @@ def create_invoice():
     if not bot_token:
         return jsonify({'error': 'Bot token not configured'}), 500
 
+    # Check for active discount
+    discount_enabled = get_setting('discount_enabled', 'false') == 'true'
+    discount_price = int(get_setting('discount_price', '0'))
+    discount_expires = get_setting('discount_expires', '')
+
+    # Calculate price
+    price = PRO_STARS_PRICE
+    if discount_enabled and discount_price > 0:
+        # Check if discount hasn't expired
+        if discount_expires:
+            try:
+                expires_date = datetime.strptime(discount_expires, '%Y-%m-%d').date()
+                if date.today() <= expires_date:
+                    price = discount_price
+            except ValueError:
+                pass
+        else:
+            price = discount_price
+
     # Build payload
     payload = json.dumps({
         'user_id': tg_id,
@@ -1082,7 +1126,7 @@ def create_invoice():
             'payload': payload,
             'provider_token': '',  # Empty for Telegram Stars
             'currency': 'XTR',  # Telegram Stars
-            'prices': [{'label': 'Pro 30 дней', 'amount': PRO_STARS_PRICE}],
+            'prices': [{'label': 'Pro 30 дней', 'amount': price}],
         },
         timeout=10,
     )
@@ -1692,6 +1736,124 @@ def get_competition_stats():
         'losses': total - wins - draws,
         'draws': draws,
     })
+
+
+# ============================================
+# API: ADMIN ANALYTICS (owner only)
+# ============================================
+@app.route('/api/admin/analytics', methods=['GET'])
+@require_auth
+@require_admin
+def get_analytics():
+    """Get system analytics for owner dashboard."""
+    from sqlalchemy import func
+
+    # Total users
+    total_users = User.query.count()
+
+    # Active today (last 24h)
+    from datetime import timedelta
+    yesterday = datetime.utcnow() - timedelta(hours=24)
+    active_today = User.query.filter(User.last_active >= yesterday).count()
+
+    # Active this week
+    week_ago = datetime.utcnow() - timedelta(days=7)
+    active_week = User.query.filter(User.last_active >= week_ago).count()
+
+    # Total questions answered (all users)
+    total_answered = db.session.query(func.sum(UserStats.total_answered)).scalar() or 0
+    total_correct = db.session.query(func.sum(UserStats.total_correct)).scalar() or 0
+
+    # Pro subscribers
+    pro_users = Subscription.query.filter_by(plan='pro', is_active=True).count()
+
+    # Competitions
+    total_competitions = Competition.query.filter_by(status='finished').count()
+
+    # Average accuracy
+    avg_accuracy = round((total_correct / total_answered * 100), 1) if total_answered > 0 else 0
+
+    # Top 10 users by questions answered
+    top_users = (
+        db.session.query(User, UserStats)
+        .join(UserStats)
+        .order_by(UserStats.total_answered.desc())
+        .limit(10)
+        .all()
+    )
+
+    top_list = [{
+        'name': u.name or 'Аноним',
+        'total_answered': s.total_answered,
+        'total_correct': s.total_correct,
+        'accuracy': round((s.total_correct / s.total_answered * 100), 1) if s.total_answered > 0 else 0,
+        'streak': s.streak,
+    } for u, s in top_users]
+
+    return jsonify({
+        'total_users': total_users,
+        'active_today': active_today,
+        'active_week': active_week,
+        'total_answered': total_answered,
+        'total_correct': total_correct,
+        'avg_accuracy': avg_accuracy,
+        'pro_users': pro_users,
+        'total_competitions': total_competitions,
+        'top_users': top_list,
+    })
+
+
+@app.route('/api/admin/users', methods=['GET'])
+@require_auth
+@require_admin
+def get_all_users():
+    """Get all users list (admin only)."""
+    users = User.query.order_by(User.created_at.desc()).all()
+    result = []
+    for u in users:
+        stats = u.stats
+        sub = u.subscription
+        result.append({
+            'id': u.id,
+            'tg_id': u.tg_id,
+            'name': u.name,
+            'goal': u.goal,
+            'is_admin': u.is_admin,
+            'created_at': u.created_at.isoformat() if u.created_at else None,
+            'last_active': u.last_active.isoformat() if u.last_active else None,
+            'total_answered': stats.total_answered if stats else 0,
+            'total_correct': stats.total_correct if stats else 0,
+            'subscription': sub.plan if sub else 'free',
+            'is_pro': sub.plan == 'pro' and sub.is_active if sub else False,
+        })
+    return jsonify(result)
+
+
+@app.route('/api/admin/user/<int:user_id>/subscription', methods=['POST'])
+@require_auth
+@require_admin
+def admin_set_subscription(user_id):
+    """Set user subscription (admin only)."""
+    data = request.get_json()
+    plan = data.get('plan', 'free')  # 'free' or 'pro'
+    duration_days = data.get('duration_days', 30)
+
+    user = User.query.get_or_404(user_id)
+    sub = get_user_subscription(user)
+
+    if plan == 'pro':
+        sub.plan = 'pro'
+        sub.is_active = True
+        sub.started_at = datetime.utcnow()
+        sub.expires_at = datetime.utcnow() + timedelta(days=duration_days)
+    else:
+        sub.plan = 'free'
+        sub.is_active = True
+        sub.expires_at = None
+
+    db.session.commit()
+    logger.info(f'Admin set subscription: user={user_id} plan={plan}')
+    return jsonify({'message': f'Subscription set to {plan}', 'user_id': user_id})
 
 
 # ============================================

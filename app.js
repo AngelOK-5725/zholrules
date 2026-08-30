@@ -231,6 +231,16 @@ function renderSubscriptionCard() {
     const pct = Math.min(100, Math.round((errorCount / limit) * 100));
     const warnClass = pct >= 80 ? 'sub-warn' : '';
 
+    // Check for discount
+    const proPrice = sub.pro_price || 1500;
+    const discountActive = sub.discount_active;
+    const discountPercent = sub.discount_percent || 0;
+
+    let priceText = `⭐ Купить Pro — ${proPrice} Stars / мес`;
+    if (discountActive) {
+      priceText = `⭐ Купить Pro — ${proPrice} Stars / мес (скидка ${discountPercent}%)`;
+    }
+
     container.innerHTML = `
       <div class="sub-card sub-free ${warnClass}">
         <div class="sub-header">📋 Бесплатный план</div>
@@ -239,7 +249,7 @@ function renderSubscriptionCard() {
           <div class="sub-progress-fill" style="width: ${pct}%; background: ${pct >= 80 ? 'var(--red)' : 'var(--primary)'};"></div>
         </div>
         <button class="btn btn-primary" style="margin-top:12px;width:100%;" onclick="buyProWithStars()">
-          ⭐ Купить Pro — 1500 Stars / мес
+          ${priceText}
         </button>
         <p class="sub-note">Без ограничений: тесты, ошибки, экзамен</p>
       </div>
@@ -757,8 +767,8 @@ function startQuiz(mode, categoryId) {
 }
 
 function startExam() {
-  // Check lives
-  if (state.stats.lives <= 0) {
+  // Check lives (owner has unlimited)
+  if (state.stats.lives <= 0 && !state.user.isAdmin) {
     showPaymentModal();
     return;
   }
@@ -958,9 +968,20 @@ function checkAnswer() {
       quizState.wrongCount++;
 
       // Only non-Pro users lose lives
-      if (!state.subscription?.is_pro && state.stats.lives > 0) {
+      const isOwner = state.user.isAdmin;
+      if (!state.subscription?.is_pro && !isOwner && state.stats.lives > 0) {
         state.stats.lives--;
-        updateUI(); // Update lives badge immediately
+        updateUI();
+
+        // BLOCK: no more lives → stop exam
+        if (state.stats.lives <= 0) {
+          saveState();
+          setTimeout(() => {
+            alert('🚫 Жизни закончились!\n\nКупите Pro для безлимитных жизней или докупите жизни.');
+            showPaymentModal();
+          }, 500);
+          return;
+        }
 
         // Warn when low
         if (state.stats.lives === 1) {
@@ -969,7 +990,6 @@ function checkAnswer() {
       }
 
       if (quizState.wrongCount > 8) {
-        // Failed exam
         endQuiz(false);
         return;
       }
@@ -1348,7 +1368,11 @@ function switchAdminTab(tab) {
   event.currentTarget.classList.add('active');
   document.getElementById(`admin-${tab}`).classList.add('active');
 
-  if (tab === 'settings') {
+  if (tab === 'dashboard') {
+    loadDashboard();
+  } else if (tab === 'users') {
+    loadUsersList();
+  } else if (tab === 'settings') {
     loadAdminSettings();
   } else if (tab === 'list') {
     renderAdminQuestionsList();
@@ -1731,6 +1755,127 @@ function formatTime(seconds) {
 }
 
 // ============================================
+// ADMIN: DASHBOARD & ANALYTICS
+// ============================================
+async function loadDashboard() {
+  try {
+    const data = await apiGet('/api/admin/analytics');
+    renderDashboard(data);
+  } catch (e) {
+    console.error('Failed to load dashboard:', e);
+    document.getElementById('dashboard-stats').innerHTML = '<p style="color:var(--red);">Ошибка загрузки</p>';
+  }
+}
+
+function renderDashboard(data) {
+  const statsEl = document.getElementById('dashboard-stats');
+  statsEl.innerHTML = `
+    <div class="dashboard-stat">
+      <div class="dashboard-stat-value">${data.total_users}</div>
+      <div class="dashboard-stat-label">Всего пользователей</div>
+    </div>
+    <div class="dashboard-stat">
+      <div class="dashboard-stat-value">${data.active_today}</div>
+      <div class="dashboard-stat-label">Активны сегодня</div>
+    </div>
+    <div class="dashboard-stat">
+      <div class="dashboard-stat-value">${data.active_week}</div>
+      <div class="dashboard-stat-label">Активны за неделю</div>
+    </div>
+    <div class="dashboard-stat">
+      <div class="dashboard-stat-value">${data.pro_users}</div>
+      <div class="dashboard-stat-label">Pro подписчиков</div>
+    </div>
+    <div class="dashboard-stat">
+      <div class="dashboard-stat-value">${data.total_answered}</div>
+      <div class="dashboard-stat-label">Всего ответов</div>
+    </div>
+    <div class="dashboard-stat">
+      <div class="dashboard-stat-value">${data.avg_accuracy}%</div>
+      <div class="dashboard-stat-label">Средняя точность</div>
+    </div>
+    <div class="dashboard-stat">
+      <div class="dashboard-stat-value">${data.total_competitions}</div>
+      <div class="dashboard-stat-label">Соревнований</div>
+    </div>
+  `;
+
+  // Top users
+  const topEl = document.getElementById('top-users-list');
+  if (data.top_users && data.top_users.length > 0) {
+    topEl.innerHTML = data.top_users.map((u, i) => `
+      <div class="user-card">
+        <span style="font-size:20px;font-weight:800;color:var(--amber);width:30px;">#${i+1}</span>
+        <div class="user-card-info">
+          <div class="user-card-name">${u.name}</div>
+          <div class="user-card-meta">${u.total_answered} вопросов | ${u.accuracy}% точность | 🔥 ${u.streak}</div>
+        </div>
+      </div>
+    `).join('');
+  } else {
+    topEl.innerHTML = '<p style="color:var(--tg-theme-hint-color);">Пока нет данных</p>';
+  }
+}
+
+// ============================================
+// ADMIN: USERS LIST
+// ============================================
+async function loadUsersList() {
+  try {
+    const users = await apiGet('/api/admin/users');
+    renderUsersList(users);
+  } catch (e) {
+    console.error('Failed to load users:', e);
+    document.getElementById('users-list').innerHTML = '<p style="color:var(--red);">Ошибка загрузки</p>';
+  }
+}
+
+function renderUsersList(users) {
+  const container = document.getElementById('users-list');
+  if (!users || users.length === 0) {
+    container.innerHTML = '<p>Нет пользователей</p>';
+    return;
+  }
+
+  container.innerHTML = users.map(u => {
+    const proBtn = u.is_pro
+      ? `<button class="btn-free" onclick="setUserSubscription(${u.id}, 'free')">Снять Pro</button>`
+      : `<button class="btn-pro" onclick="setUserSubscription(${u.id}, 'pro')">Дать Pro</button>`;
+
+    return `
+      <div class="user-card">
+        <div class="user-card-info">
+          <div class="user-card-name">${u.name || 'Аноним'} ${u.is_admin ? '👑' : ''}</div>
+          <div class="user-card-meta">
+            ID: ${u.tg_id} | ${u.total_answered} вопросов | ${u.subscription}
+            ${u.last_active ? ' | Активен: ' + new Date(u.last_active).toLocaleDateString('ru-RU') : ''}
+          </div>
+        </div>
+        <div class="user-card-actions">
+          ${proBtn}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function setUserSubscription(userId, plan) {
+  const duration = plan === 'pro' ? prompt('На сколько дней дать Pro? (по умолчанию 30)', '30') : 0;
+  if (plan === 'pro' && !duration) return;
+
+  try {
+    await apiPost(`/api/admin/user/${userId}/subscription`, {
+      plan: plan,
+      duration_days: parseInt(duration) || 30,
+    });
+    alert(`✅ Подписка ${plan === 'pro' ? 'Pro' : 'Free'} назначена!`);
+    loadUsersList();
+  } catch (e) {
+    alert('❌ Ошибка: ' + e.message);
+  }
+}
+
+// ============================================
 // ADMIN: SETTINGS
 // ============================================
 let adminSettings = [];
@@ -1764,14 +1909,18 @@ function renderSettingsForm(settings) {
     'free_plan_enabled': '🆓 Бесплатный план',
     'pro_plan_enabled': '💎 Pro план доступен',
     'lives_stars_price': '❤️ Цена жизней (Stars)',
+    'discount_enabled': '🏷️ Скидка включена',
+    'discount_percent': '📉 Размер скидки (%)',
+    'discount_price': '💰 Цена со скидкой (Stars)',
+    'discount_expires': '📅 Скидка до (YYYY-MM-DD)',
   };
 
-  const boolKeys = ['free_plan_enabled', 'pro_plan_enabled'];
+  const boolKeys = ['free_plan_enabled', 'pro_plan_enabled', 'discount_enabled'];
 
   container.innerHTML = settings.map(s => {
     const label = settingLabels[s.key] || s.key;
     const isBool = boolKeys.includes(s.key);
-    const isNumber = ['pro_stars_price', 'free_error_limit', 'max_daily_lives', 'daily_questions_target', 'exam_questions', 'exam_time_minutes', 'mini_game_duration', 'lives_stars_price'].includes(s.key);
+    const isNumber = ['pro_stars_price', 'free_error_limit', 'max_daily_lives', 'daily_questions_target', 'exam_questions', 'exam_time_minutes', 'mini_game_duration', 'lives_stars_price', 'discount_percent', 'discount_price'].includes(s.key);
 
     if (isBool) {
       return `
@@ -2178,8 +2327,8 @@ function initCompetitionSocket() {
 }
 
 function startCompetition() {
-  // Check lives
-  if (state.stats.lives <= 0) {
+  // Check lives (owner has unlimited)
+  if (state.stats.lives <= 0 && !state.user.isAdmin) {
     showPaymentModal();
     return;
   }

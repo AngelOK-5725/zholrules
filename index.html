@@ -126,7 +126,7 @@
           <div class="mode-title">Мои ошибки</div>
           <div class="mode-desc" id="errors-count">0 вопросов</div>
         </div>
-        <div class="mode-card mode-card-wide" onclick="startCompetition()">
+        <div class="mode-card" onclick="startCompetition()">
           <div class="mode-icon">⚔️</div>
           <div class="mode-title">Состязание</div>
           <div class="mode-desc">Онлайн vs игрок</div>
@@ -250,15 +250,42 @@
       </div>
 
       <div class="admin-tabs">
-        <button class="admin-tab active" onclick="switchAdminTab('settings')">⚙️ Настройки</button>
-        <button class="admin-tab" onclick="switchAdminTab('create')">Создать вопрос</button>
-        <button class="admin-tab" onclick="switchAdminTab('list')">Список</button>
-        <button class="admin-tab" onclick="switchAdminTab('categories')">Категории</button>
-        <button class="admin-tab" onclick="switchAdminTab('export')">Экспорт</button>
+        <button class="admin-tab active" onclick="switchAdminTab('dashboard')">📊 Дашборд</button>
+        <button class="admin-tab" onclick="switchAdminTab('settings')">⚙️ Настройки</button>
+        <button class="admin-tab" onclick="switchAdminTab('users')">👥 Юзеры</button>
+        <button class="admin-tab" onclick="switchAdminTab('create')">➕ Вопрос</button>
+        <button class="admin-tab" onclick="switchAdminTab('list')">📋 Список</button>
+        <button class="admin-tab" onclick="switchAdminTab('export')">📥 Экспорт</button>
+      </div>
+
+      <!-- Dashboard Panel -->
+      <div id="admin-dashboard" class="admin-panel active">
+        <div class="admin-settings-header">
+          <h3>📊 Дашборд</h3>
+          <p>Аналитика системы в реальном времени</p>
+        </div>
+        <div id="dashboard-stats" class="dashboard-grid">
+          <!-- Filled by JS -->
+        </div>
+        <div id="dashboard-top-users" class="dashboard-section">
+          <h4>🏆 Топ пользователей</h4>
+          <div id="top-users-list"></div>
+        </div>
+      </div>
+
+      <!-- Users Panel -->
+      <div id="admin-users" class="admin-panel">
+        <div class="admin-settings-header">
+          <h3>👥 Пользователи</h3>
+          <p>Управление подписками и доступом</p>
+        </div>
+        <div id="users-list" class="users-list">
+          <!-- Filled by JS -->
+        </div>
       </div>
 
       <!-- Settings Panel -->
-      <div id="admin-settings" class="admin-panel active">
+      <div id="admin-settings" class="admin-panel">
         <div class="admin-settings-header">
           <h3>⚙️ Настройки бизнеса</h3>
           <p>Изменяйте цены и лимиты без передеплоя сервера</p>
