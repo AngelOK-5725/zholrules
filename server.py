@@ -81,6 +81,36 @@ CORS(app, origins=CORS_ORIGINS)
 # SocketIO for real-time competition
 socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
 
+def ensure_question_columns():
+    """Add new Question columns to an existing table (lightweight auto-migration).
+
+    Works on both SQLite (local dev) and PostgreSQL (Neon production).
+    """
+    is_sqlite = db.engine.dialect.name == 'sqlite'
+
+    with db.engine.connect() as conn:
+        if is_sqlite:
+            existing = {row[1] for row in conn.execute(db.text('PRAGMA table_info(questions)'))}
+        else:
+            existing = set()
+
+        for col, ddl in (
+            ('is_media_only', 'ALTER TABLE questions ADD COLUMN is_media_only BOOLEAN'),
+            ("option_media", "ALTER TABLE questions ADD COLUMN option_media TEXT DEFAULT ''"),
+        ):
+            if is_sqlite:
+                if col in existing:
+                    continue  # column already there
+                statement = ddl
+            else:
+                statement = ddl.replace('ADD COLUMN', 'ADD COLUMN IF NOT EXISTS')
+            try:
+                conn.execute(db.text(statement))
+                conn.commit()
+            except Exception as e:
+                logger.warning(f'Column migration skipped ({col}): {e}')
+
+
 # Database — Neon PostgreSQL or SQLite fallback
 database_url = os.getenv('DATABASE_URL', '').strip()
 if not database_url:
@@ -290,6 +320,35 @@ class Category(db.Model):
         }
 
 
+YOUTUBE_HOSTS = ('youtube.com', 'youtu.be', 'm.youtube.com', 'www.youtube.com', 'music.youtube.com')
+
+
+def get_youtube_id(url: str) -> str:
+    """Extract the YouTube video ID from any common URL format.
+    Supports: youtube.com/watch?v=ID, youtu.be/ID, /shorts/ID, /embed/ID, /live/ID.
+    Returns '' if the URL is not a YouTube link.
+    """
+    if not url:
+        return ''
+    url = url.strip()
+    try:
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(url)
+        host = (parsed.hostname or '').lower()
+        if host not in YOUTUBE_HOSTS:
+            return ''
+        if host == 'youtu.be':
+            return parsed.path.lstrip('/').split('/')[0]
+        if parsed.path in ('/watch', '/watch/'):
+            return parse_qs(parsed.query).get('v', [''])[0]
+        for prefix in ('/shorts/', '/embed/', '/live/', '/v/'):
+            if parsed.path.startswith(prefix):
+                return parsed.path[len(prefix):].split('/')[0]
+    except Exception:
+        pass
+    return ''
+
+
 class Question(db.Model):
     __tablename__ = 'questions'
 
@@ -298,8 +357,10 @@ class Question(db.Model):
     question = db.Column(db.Text, nullable=False)
     media_type = db.Column(db.String(20), default='none')
     media_url = db.Column(db.String(500), default='')
+    is_media_only = db.Column(db.Boolean, default=False)
     multiple_choice = db.Column(db.Boolean, default=False)
     options = db.Column(db.Text, nullable=False)  # JSON array
+    option_media = db.Column(db.Text, default='')  # JSON object: {index: {media_type, media_url}}
     correct_options = db.Column(db.Text, nullable=False)  # JSON array
     explanation = db.Column(db.Text, default='')
     difficulty = db.Column(db.String(20), default='easy')
@@ -312,8 +373,10 @@ class Question(db.Model):
             'question': self.question,
             'media_type': self.media_type,
             'media_url': self.media_url,
+            'is_media_only': self.is_media_only,
             'multiple_choice': self.multiple_choice,
             'options': json.loads(self.options),
+            'option_media': json.loads(self.option_media) if self.option_media else {},
             'correct_options': json.loads(self.correct_options),
             'explanation': self.explanation,
             'difficulty': self.difficulty,
@@ -599,8 +662,10 @@ def create_question():
         question=data['question'],
         media_type=data.get('media_type', 'none'),
         media_url=data.get('media_url', ''),
+        is_media_only=bool(data.get('is_media_only', False)),
         multiple_choice=data.get('multiple_choice', False),
         options=json.dumps(data['options']),
+        option_media=json.dumps(data.get('option_media', {})),
         correct_options=json.dumps(data['correct_options']),
         explanation=data.get('explanation', ''),
         difficulty=data.get('difficulty', 'easy'),
@@ -628,10 +693,14 @@ def update_question(question_id):
         q.media_type = data['media_type']
     if 'media_url' in data:
         q.media_url = data['media_url']
+    if 'is_media_only' in data:
+        q.is_media_only = bool(data['is_media_only'])
     if 'multiple_choice' in data:
         q.multiple_choice = bool(data['multiple_choice'])
     if 'options' in data:
         q.options = json.dumps(data['options'])
+    if 'option_media' in data:
+        q.option_media = json.dumps(data.get('option_media') or {})
     if 'correct_options' in data:
         q.correct_options = json.dumps(data['correct_options'])
     if 'explanation' in data:
@@ -693,8 +762,10 @@ def import_questions():
             question=q_data['question'],
             media_type=q_data.get('media_type', 'none'),
             media_url=q_data.get('media_url', ''),
+            is_media_only=bool(q_data.get('is_media_only', False)),
             multiple_choice=q_data.get('multiple_choice', False),
             options=json.dumps(q_data['options']),
+            option_media=json.dumps(q_data.get('option_media', {})),
             correct_options=json.dumps(q_data['correct_options']),
             explanation=q_data.get('explanation', ''),
             difficulty=q_data.get('difficulty', 'easy'),
@@ -1534,6 +1605,7 @@ def init_db():
     """Create tables and seed data from JSON."""
     with app.app_context():
         db.create_all()
+        ensure_question_columns()
 
         # Seed default categories if empty
         if Category.query.count() == 0:
@@ -1561,8 +1633,10 @@ def init_db():
                         question=q_data['question'],
                         media_type=q_data.get('media_type', 'none'),
                         media_url=q_data.get('media_url', ''),
+                        is_media_only=bool(q_data.get('is_media_only', False)),
                         multiple_choice=q_data.get('multiple_choice', False),
                         options=json.dumps(q_data['options']),
+                        option_media=json.dumps(q_data.get('option_media', {})),
                         correct_options=json.dumps(q_data['correct_options']),
                         explanation=q_data.get('explanation', ''),
                         difficulty=q_data.get('difficulty', 'easy'),

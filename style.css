@@ -957,16 +957,38 @@ textarea.input-field {
 
 .admin-tabs {
   display: flex;
+  flex-wrap: nowrap;
   gap: 4px;
   margin-bottom: 20px;
   background: var(--tg-theme-secondary-bg-color);
   border-radius: var(--radius-md);
   padding: 4px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.admin-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 480px) {
+  .admin-tabs {
+    margin-left: -16px;
+    margin-right: -16px;
+    padding: 4px 10px;
+    border-radius: 0;
+  }
+
+  .admin-tab {
+    padding: 9px 12px;
+    font-size: 12.5px;
+  }
 }
 
 .admin-tab {
-  flex: 1;
-  padding: 10px 8px;
+  flex: 0 0 auto;
+  padding: 10px 14px;
   font-size: 13px;
   font-weight: 600;
   border: none;
@@ -1065,6 +1087,8 @@ textarea.input-field {
   border-radius: var(--radius-md);
   padding: 16px;
   text-align: center;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .dashboard-stat-value {
@@ -1155,13 +1179,143 @@ textarea.input-field {
 
 .option-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   margin-bottom: 8px;
 }
 
 .option-row .input-field {
+  flex: 1 1 130px;
+  min-width: 110px;
+}
+
+/* Green "correct answer" toggle in the admin form */
+.option-correct-btn {
+  flex-shrink: 0;
+  padding: 9px 12px;
+  border: 1.5px solid var(--tg-theme-hint-color);
+  border-radius: var(--radius-md);
+  background: var(--tg-theme-secondary-bg-color);
+  color: var(--tg-theme-hint-color);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.option-correct-btn.checked {
+  background: #22c55e;
+  border-color: #22c55e;
+  color: #fff;
+  box-shadow: 0 2px 10px rgba(34, 197, 94, 0.4);
+}
+
+.option-media-btn {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border: 1.5px solid var(--tg-theme-hint-color);
+  border-radius: var(--radius-md);
+  background: var(--tg-theme-secondary-bg-color);
+  font-size: 17px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.option-media-btn.has-media {
+  border-color: var(--accent-color, #2563EB);
+  background: rgba(37, 99, 235, 0.12);
+}
+
+.option-media {
+  margin: -4px 0 10px;
+  padding: 10px;
+  border: 1.5px dashed var(--tg-theme-hint-color);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.option-media .option-media-preview:empty {
+  display: none;
+  margin: 0;
+}
+
+.option-media .option-media-preview {
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.option-media .option-media-preview img,
+.option-media .option-media-preview video,
+.option-media .option-media-preview iframe {
+  width: 100%;
+  border-radius: var(--radius-md);
+}
+
+.option-media .option-media-file {
+  font-size: 13px;
+  color: var(--tg-theme-hint-color);
+}
+
+/* Per-answer media shown inside quiz options */
+.quiz-option-media,
+.comp-option-media {
   flex: 1;
+  min-width: 0;
+}
+
+.quiz-option-media img,
+.comp-option-media img {
+  max-width: 160px;
+  max-height: 110px;
+  border-radius: var(--radius-md);
+  object-fit: contain;
+}
+
+.quiz-option-media iframe,
+.comp-option-media iframe {
+  width: 200px;
+  max-width: 100%;
+  aspect-ratio: 16/9;
+  border: none;
+  border-radius: var(--radius-md);
+  pointer-events: none;
+}
+
+/* YouTube iframe inside quiz media area */
+.quiz-media iframe,
+.comp-media iframe {
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 16/9;
+  border: none;
+  border-radius: var(--radius-md);
+}
+
+.quiz-option.has-media,
+.comp-option.has-media {
+  align-items: flex-start;
+  padding: 12px;
+}
+
+.quiz-option.has-media .quiz-option-marker {
+  margin-top: 12px;
+  flex-shrink: 0;
+}
+
+.quiz-option.has-media .quiz-option-text {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.quiz-option.has-media .quiz-option-text:empty {
+  display: none;
+  margin: 6px 0 2px;
 }
 
 .checkbox-label {

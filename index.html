@@ -376,6 +376,10 @@
         <div class="form-group">
           <label>Текст вопроса</label>
           <textarea id="admin-question" class="input-field" placeholder="Введите текст вопроса..."></textarea>
+          <label class="checkbox-label" style="margin-top:8px;display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" id="admin-media-only">
+            🖼 Только медиа (без текста вопроса)
+          </label>
         </div>
         <div class="form-group">
           <label>Тип контента</label>
@@ -392,17 +396,35 @@
           <div class="media-preview" id="admin-media-preview"></div>
           <label style="margin-top:10px;">Или укажите URL медиафайла</label>
           <input type="text" id="admin-media-url" class="input-field" placeholder="https://..." oninput="previewMediaFromUrl(this.value)">
+          <label style="margin-top:10px;">Или ссылка на YouTube-видео</label>
+          <input type="text" id="admin-media-url-youtube" class="input-field" placeholder="https://youtube.com/watch?v=..." oninput="previewMediaFromUrl(this.value)">
         </div>
         <div class="form-group">
           <label>Варианты ответов (минимум 2)</label>
           <div id="admin-options-list">
-            <div class="option-row">
-              <input type="text" class="input-field" placeholder="Вариант 1">
-              <label class="checkbox-label"><input type="checkbox"> ✓</label>
+            <div class="option-block">
+              <div class="option-row">
+                <input type="text" class="input-field" placeholder="Вариант 1">
+                <button type="button" class="option-media-btn" onclick="toggleOptionMedia(this)" title="Медиа для ответа">🖼</button>
+                <label class="checkbox-label"><input type="checkbox"> ✓</label>
+              </div>
+              <div class="option-media" style="display:none;">
+                <input type="text" class="input-field option-media-url" placeholder="URL картинки или YouTube-ссылка (необязательно)" oninput="previewOptionMedia(this)">
+                <input type="file" class="option-media-file" accept="image/*,video/*" onchange="handleOptionMediaFile(this)">
+                <div class="option-media-preview"></div>
+              </div>
             </div>
-            <div class="option-row">
-              <input type="text" class="input-field" placeholder="Вариант 2">
-              <label class="checkbox-label"><input type="checkbox"> ✓</label>
+            <div class="option-block">
+              <div class="option-row">
+                <input type="text" class="input-field" placeholder="Вариант 2">
+                <button type="button" class="option-media-btn" onclick="toggleOptionMedia(this)" title="Медиа для ответа">🖼</button>
+                <label class="checkbox-label"><input type="checkbox"> ✓</label>
+              </div>
+              <div class="option-media" style="display:none;">
+                <input type="text" class="input-field option-media-url" placeholder="URL картинки или YouTube-ссылка (необязательно)" oninput="previewOptionMedia(this)">
+                <input type="file" class="option-media-file" accept="image/*,video/*" onchange="handleOptionMediaFile(this)">
+                <div class="option-media-preview"></div>
+              </div>
             </div>
           </div>
           <button class="btn btn-secondary btn-small" onclick="addAdminOption()">+ Добавить вариант</button>

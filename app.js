@@ -1051,15 +1051,15 @@ function renderQuestion() {
   document.getElementById('quiz-progress').style.width = `${pct}%`;
   document.getElementById('quiz-counter').textContent = `${quizState.currentIndex + 1} / ${total}`;
 
-  // Question text
-  document.getElementById('quiz-question-text').textContent = q.question;
+  // Question text (hidden for media-only questions)
+  const questionTextEl = document.getElementById('quiz-question-text');
+  questionTextEl.textContent = q.question || '';
+  questionTextEl.style.display = q.question ? '' : 'none';
 
-  // Media
+  // Media (image, video file or YouTube embed)
   const mediaEl = document.getElementById('quiz-media');
-  if (q.media_type === 'image' && q.media_url) {
-    mediaEl.innerHTML = `<img src="${q.media_url}" alt="Медиа" loading="lazy">`;
-  } else if (q.media_type === 'video' && q.media_url) {
-    mediaEl.innerHTML = `<video src="${q.media_url}" controls muted></video>`;
+  if (q.media_url) {
+    renderMediaInto(mediaEl, q.media_type, q.media_url);
   } else {
     mediaEl.innerHTML = '';
   }
@@ -1069,12 +1069,16 @@ function renderQuestion() {
   const markers = ['A', 'B', 'C', 'D', 'E', 'F'];
 
   // Add animation class to options
-  optionsEl.innerHTML = q.options.map((opt, idx) => `
-    <div class="quiz-option" data-index="${idx}" onclick="selectQuizOption(${idx})" style="animation: slideInUp 0.3s ease ${idx * 0.05}s both;">
+  optionsEl.innerHTML = q.options.map((opt, idx) => {
+    const mediaHtml = optionMediaHtml(q, idx, 'quiz');
+    return `
+    <div class="quiz-option${mediaHtml ? ' has-media' : ''}" data-index="${idx}" onclick="selectQuizOption(${idx})" style="animation: slideInUp 0.3s ease ${idx * 0.05}s both;">
       <span class="quiz-option-marker">${markers[idx]}</span>
-      <span class="quiz-option-text">${opt}</span>
+      ${mediaHtml}
+      <span class="quiz-option-text">${escapeHtml(opt)}</span>
     </div>
-  `).join('');
+  `;
+  }).join('');
 
   // Hide explanation
   document.getElementById('quiz-explanation').style.display = 'none';
@@ -1646,9 +1650,11 @@ function resetQuestionForm() {
   document.getElementById('admin-media-type').value = 'none';
   document.getElementById('admin-media-group').style.display = 'none';
   document.getElementById('admin-media-url').value = '';
+  document.getElementById('admin-media-url-youtube').value = '';
   document.getElementById('admin-media-file').value = '';
   document.getElementById('admin-media-preview').innerHTML = '';
   document.getElementById('admin-media-upload-status').textContent = '';
+  document.getElementById('admin-media-only').checked = false;
 
   // Reset text fields
   document.getElementById('admin-question').value = '';
@@ -1661,16 +1667,8 @@ function resetQuestionForm() {
   if (saveBtn) saveBtn.textContent = '💾 Сохранить вопрос';
 
   // Reset options
-  document.getElementById('admin-options-list').innerHTML = `
-    <div class="option-row">
-      <input type="text" class="input-field" placeholder="Вариант 1">
-      <label class="checkbox-label"><input type="checkbox"> ✓</label>
-    </div>
-    <div class="option-row">
-      <input type="text" class="input-field" placeholder="Вариант 2">
-      <label class="checkbox-label"><input type="checkbox"> ✓</label>
-    </div>
-  `;
+  document.getElementById('admin-options-list').innerHTML =
+    adminOptionBlockHtml(1) + adminOptionBlockHtml(2);
 }
 
 function escapeHtml(str) {
@@ -1686,10 +1684,13 @@ function fillQuestionForm(q) {
   document.getElementById('admin-question').value = q.question || '';
   document.getElementById('admin-media-type').value = q.media_type || 'none';
   onMediaTypeChange(document.getElementById('admin-media-type'));
-  document.getElementById('admin-media-url').value = q.media_url || '';
+  const isYt = !!parseYouTubeId(q.media_url || '');
+  document.getElementById('admin-media-url').value = isYt ? '' : (q.media_url || '');
+  document.getElementById('admin-media-url-youtube').value = isYt ? (q.media_url || '') : '';
   if (q.media_url) {
-    showMediaPreview(q.media_url, q.media_type === 'video');
+    previewMediaFromUrl(q.media_url);
   }
+  document.getElementById('admin-media-only').checked = !!q.is_media_only;
   document.getElementById('admin-explanation').value = q.explanation || '';
   document.getElementById('admin-difficulty').value = q.difficulty || 'easy';
   document.getElementById('admin-choice-type').value = q.multiple_choice ? 'multiple' : 'single';
@@ -1698,13 +1699,18 @@ function fillQuestionForm(q) {
   const container = document.getElementById('admin-options-list');
   container.innerHTML = '';
   (q.options || []).forEach((opt, idx) => {
-    const row = document.createElement('div');
-    row.className = 'option-row';
-    row.innerHTML = `
-      <input type="text" class="input-field" placeholder="Вариант ${idx + 1}" value="${escapeHtml(opt)}">
-      <label class="checkbox-label"><input type="checkbox" ${(q.correct_options || []).includes(idx) ? 'checked' : ''}> ✓</label>
-    `;
-    container.appendChild(row);
+    container.insertAdjacentHTML('beforeend', adminOptionBlockHtml(idx + 1));
+    const block = container.lastElementChild;
+    block.querySelector('.option-row input[type="text"]').value = opt;
+    if ((q.correct_options || []).includes(idx)) {
+      block.querySelector('.option-correct-btn').classList.add('checked');
+    }
+    const om = q.option_media && (q.option_media[String(idx)] || q.option_media[idx]);
+    if (om && om.media_url) {
+      const urlInput = block.querySelector('.option-media-url');
+      urlInput.value = om.media_url;
+      previewOptionMedia(urlInput);
+    }
   });
   if (!q.options || q.options.length === 0) {
     addAdminOption();
@@ -1731,14 +1737,7 @@ function editQuestion(id) {
 
 function addAdminOption() {
   const container = document.getElementById('admin-options-list');
-  const count = container.children.length + 1;
-  const row = document.createElement('div');
-  row.className = 'option-row';
-  row.innerHTML = `
-    <input type="text" class="input-field" placeholder="Вариант ${count}">
-    <label class="checkbox-label"><input type="checkbox"> ✓</label>
-  `;
-  container.appendChild(row);
+  container.insertAdjacentHTML('beforeend', adminOptionBlockHtml(container.children.length + 1));
 }
 
 async function saveQuestion() {
@@ -1746,12 +1745,20 @@ async function saveQuestion() {
   const questionText = document.getElementById('admin-question').value.trim();
   const mediaType = document.getElementById('admin-media-type').value;
   const mediaUrl = document.getElementById('admin-media-url').value.trim();
+  const mediaUrlYoutube = document.getElementById('admin-media-url-youtube').value.trim();
+  const finalMediaUrl = mediaUrlYoutube || mediaUrl;
+  const isMediaOnly = document.getElementById('admin-media-only').checked;
   const explanation = document.getElementById('admin-explanation').value.trim();
   const difficulty = document.getElementById('admin-difficulty').value;
   const isMultiple = document.getElementById('admin-choice-type').value === 'multiple';
 
-  if (!questionText) {
-    alert('Введите текст вопроса');
+  if (!questionText && !isMediaOnly) {
+    alert('Введите текст вопроса или отметьте «Только медиа»');
+    return;
+  }
+
+  if (isMediaOnly && !questionText && !finalMediaUrl) {
+    alert('Для вопроса «только медиа» добавьте медиафайл или YouTube-ссылку');
     return;
   }
 
@@ -1762,7 +1769,7 @@ async function saveQuestion() {
 
   optionRows.forEach((row, idx) => {
     const text = row.querySelector('input[type="text"]').value.trim();
-    const isCorrect = row.querySelector('input[type="checkbox"]').checked;
+    const isCorrect = row.querySelector('.option-correct-btn')?.classList.contains('checked');
 
     if (text) {
       options.push(text);
@@ -1776,12 +1783,12 @@ async function saveQuestion() {
   }
 
   if (correctOptions.length === 0) {
-    alert('Отметьте хотя бы один правильный ответ');
+    alert('Отметьте правильный ответ — нажмите зелёную кнопку «✓ Правильный» напротив нужного варианта');
     return;
   }
 
   if (!isMultiple && correctOptions.length > 1) {
-    alert('Выбран режим "один правильный ответ", но отмечено несколько. Либо смените тип, либо оставьте один.');
+    alert('Отмечено несколько правильных ответов, а тип выбора — «один правильный».\n\nЛибо оставьте зелёным только один вариант, либо смените тип выбора на «Несколько правильных».');
     return;
   }
 
@@ -1789,8 +1796,10 @@ async function saveQuestion() {
     category: category,
     question: questionText,
     media_type: mediaType,
-    media_url: mediaUrl || '',
+    media_url: finalMediaUrl,
+    is_media_only: isMediaOnly,
     multiple_choice: isMultiple,
+    option_media: collectOptionMedia(),
     options: options,
     correct_options: correctOptions,
     explanation: explanation,
@@ -1862,8 +1871,156 @@ function previewMediaFromUrl(value) {
     document.getElementById('admin-media-preview').innerHTML = '';
     return;
   }
+  const ytId = parseYouTubeId(value);
+  if (ytId) {
+    document.getElementById('admin-media-preview').innerHTML =
+      `<iframe src="https://www.youtube-nocookie.com/embed/${ytId}?rel=0" title="Превью YouTube" style="width:100%;aspect-ratio:16/9;border:none;border-radius:12px;" loading="lazy" allowfullscreen></iframe>`;
+    return;
+  }
   const mediaType = document.getElementById('admin-media-type').value;
   showMediaPreview(value, mediaType === 'video');
+}
+
+// ============================================
+// YOUTUBE + MEDIA HELPERS
+// ============================================
+function parseYouTubeId(url) {
+  if (!url) return '';
+  const str = String(url).trim();
+  let m = str.match(/(?:youtube\.com|youtube-nocookie\.com)\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/|v\/)([\w-]{11})/i);
+  if (m) return m[1];
+  m = str.match(/youtu\.be\/([\w-]{11})/i);
+  if (m) return m[1];
+  return '';
+}
+
+function renderMediaInto(el, mediaType, mediaUrl, optionText) {
+  const ytId = parseYouTubeId(mediaUrl);
+  if (ytId) {
+    el.innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${ytId}?rel=0&playsinline=1" title="Видео${optionText ? ' — ' + escapeHtml(optionText) : ''}" loading="lazy" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>`;
+    return;
+  }
+  if (mediaType === 'video' && mediaUrl) {
+    el.innerHTML = `<video src="${escapeHtml(mediaUrl)}" controls muted playsinline style="max-width:100%;border-radius:12px;background:#000;"></video>`;
+  } else if (mediaUrl) {
+    el.innerHTML = `<img src="${escapeHtml(mediaUrl)}" alt="Медиа" loading="lazy">`;
+  } else {
+    el.innerHTML = '';
+  }
+}
+
+function optionMediaHtml(q, idx, context) {
+  const om = q.option_media && (q.option_media[String(idx)] || q.option_media[idx]);
+  if (!om || !om.media_url) return '';
+  const ytId = parseYouTubeId(om.media_url);
+  if (ytId) {
+    return `<div class="${context}-option-media"><iframe src="https://www.youtube-nocookie.com/embed/${ytId}?rel=0&playsinline=1" title="Медиа ответа" loading="lazy" allow="accelerometer; encrypted-media; picture-in-picture; web-share" allowfullscreen></iframe></div>`;
+  }
+  if (om.media_type === 'video') {
+    return `<div class="${context}-option-media"><video src="${escapeHtml(om.media_url)}" controls muted playsinline></video></div>`;
+  }
+  return `<div class="${context}-option-media"><img src="${escapeHtml(om.media_url)}" alt="" loading="lazy"></div>`;
+}
+
+// ============================================
+// ADMIN: PER-ANSWER MEDIA
+// ============================================
+function adminOptionBlockHtml(count) {
+  return `
+    <div class="option-block">
+      <div class="option-row">
+        <input type="text" class="input-field" placeholder="Вариант ${count}">
+        <button type="button" class="option-media-btn" onclick="toggleOptionMedia(this)" title="Медиа для ответа">🖼</button>
+        <button type="button" class="option-correct-btn" onclick="toggleCorrectOption(this)" title="Отметить как правильный">✓ Правильный</button>
+      </div>
+      <div class="option-media" style="display:none;">
+        <input type="text" class="input-field option-media-url" placeholder="URL картинки или YouTube-ссылка (необязательно)" oninput="previewOptionMedia(this)">
+        <input type="file" class="option-media-file" accept="image/*,video/*" onchange="handleOptionMediaFile(this)">
+        <div class="option-media-preview"></div>
+      </div>
+    </div>`;
+}
+
+function toggleCorrectOption(btn) {
+  const isSingle = document.getElementById('admin-choice-type').value === 'single';
+
+  if (isSingle) {
+    // Single-choice mode: only one green button at a time
+    document.querySelectorAll('#admin-options-list .option-correct-btn').forEach(b => {
+      b.classList.toggle('checked', b === btn);
+    });
+  } else {
+    // Multiple-choice mode: toggle independently
+    btn.classList.toggle('checked');
+  }
+
+  if (window.Telegram?.WebApp?.HapticFeedback) {
+    Telegram.WebApp.HapticFeedback.selectionChanged();
+  }
+}
+
+function toggleOptionMedia(btn) {
+  const panel = btn.closest('.option-block').querySelector('.option-media');
+  const isOpen = panel.style.display !== 'none';
+  panel.style.display = isOpen ? 'none' : 'flex';
+  if (!isOpen) {
+    panel.querySelector('.option-media-url').focus();
+  }
+}
+
+function previewOptionMedia(input) {
+  const panel = input.closest('.option-media');
+  const url = input.value.trim();
+  const preview = panel.querySelector('.option-media-preview');
+  const btn = panel.closest('.option-block').querySelector('.option-media-btn');
+  btn.classList.toggle('has-media', !!url);
+  if (!url) {
+    preview.innerHTML = '';
+    return;
+  }
+  const ytId = parseYouTubeId(url);
+  if (ytId) {
+    preview.innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${ytId}?rel=0" title="Превью" loading="lazy" allowfullscreen></iframe>`;
+  } else if (/\.(mp4|webm|mov|m4v)(\?|$)/i.test(url)) {
+    preview.innerHTML = `<video src="${escapeHtml(url)}" controls muted playsinline></video>`;
+  } else {
+    preview.innerHTML = `<img src="${escapeHtml(url)}" alt="Превью">`;
+  }
+}
+
+async function handleOptionMediaFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const panel = input.closest('.option-media');
+  const urlInput = panel.querySelector('.option-media-url');
+  const preview = panel.querySelector('.option-media-preview');
+  const btn = panel.closest('.option-block').querySelector('.option-media-btn');
+  preview.innerHTML = '<span style="font-size:13px;color:var(--tg-theme-hint-color);">⏳ Загрузка...</span>';
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    const data = await apiUploadForm('/api/upload', formData);
+    urlInput.value = data.url;
+    btn.classList.add('has-media');
+    previewOptionMedia(urlInput);
+  } catch (e) {
+    console.error('Option media upload failed:', e);
+    preview.innerHTML = `<span style="font-size:13px;color:#e5484d;">❌ ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function collectOptionMedia() {
+  const media = {};
+  document.querySelectorAll('#admin-options-list .option-block').forEach((block, idx) => {
+    const url = block.querySelector('.option-media-url').value.trim();
+    if (!url) return;
+    const ytId = parseYouTubeId(url);
+    media[idx] = {
+      media_type: (ytId || /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url)) ? 'video' : 'image',
+      media_url: url,
+    };
+  });
+  return media;
 }
 
 let adminQuestionSearch = '';
@@ -1892,7 +2049,7 @@ function renderAdminQuestionsList() {
   container.innerHTML = pageItems.map(item => `
     <div class="admin-question-card">
       <span class="admin-q-id">#${item.id}</span>
-      <span class="admin-q-text">${escapeHtml(item.question)}</span>
+      <span class="admin-q-text">${item.question ? escapeHtml(item.question) : '<i>— только медиа —</i>'}</span>
       ${item.media_type !== 'none' ? `<span class="admin-q-media">${item.media_type === 'image' ? '🖼️' : '🎬'}</span>` : ''}
       <button class="admin-q-edit" onclick="editQuestion(${item.id})" title="Редактировать">✏️</button>
       <button class="admin-q-delete" onclick="deleteQuestion(${item.id})" title="Удалить">🗑️</button>
@@ -2562,14 +2719,14 @@ function renderCompQuestion() {
   document.getElementById('comp-counter').textContent = `${compState.currentIndex + 1} / ${total}`;
 
   // Question
-  document.getElementById('comp-question-text').textContent = q.question;
+  const questionTextEl = document.getElementById('comp-question-text');
+  questionTextEl.textContent = q.question || '';
+  questionTextEl.style.display = q.question ? '' : 'none';
 
-  // Media
+  // Media (image, video file or YouTube embed)
   const mediaEl = document.getElementById('comp-media');
-  if (q.media_type === 'image' && q.media_url) {
-    mediaEl.innerHTML = `<img src="${q.media_url}" alt="Медиа" loading="lazy">`;
-  } else if (q.media_type === 'video' && q.media_url) {
-    mediaEl.innerHTML = `<video src="${q.media_url}" controls muted></video>`;
+  if (q.media_url) {
+    renderMediaInto(mediaEl, q.media_type, q.media_url);
   } else {
     mediaEl.innerHTML = '';
   }
@@ -2578,12 +2735,16 @@ function renderCompQuestion() {
   const optionsEl = document.getElementById('comp-options');
   const markers = ['A', 'B', 'C', 'D', 'E', 'F'];
 
-  optionsEl.innerHTML = q.options.map((opt, idx) => `
-    <div class="comp-option" onclick="selectCompOption(${idx})">
+  optionsEl.innerHTML = q.options.map((opt, idx) => {
+    const mediaHtml = optionMediaHtml(q, idx, 'comp');
+    return `
+    <div class="comp-option${mediaHtml ? ' has-media' : ''}" onclick="selectCompOption(${idx})">
       <span class="comp-option-marker">${markers[idx]}</span>
-      <span>${opt}</span>
+      ${mediaHtml}
+      <span>${escapeHtml(opt)}</span>
     </div>
-  `).join('');
+  `;
+  }).join('');
 
   // Hide explanation
   document.getElementById('comp-explanation').style.display = 'none';
