@@ -296,8 +296,10 @@ function applyTranslations() {
 // ============================================
 // CONFIG
 // ============================================
-const API_BASE = window.location.hostname === 'localhost'
-  ? 'http://localhost:5000'
+// Local dev: same host as the page (works for both localhost and 127.0.0.1, same-origin)
+const IS_LOCAL_DEV = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+const API_BASE = IS_LOCAL_DEV
+  ? `${window.location.protocol}//${window.location.hostname}:5000`
   : 'https://zholrules.onrender.com';
 const QUESTIONS_PER_MIX = 20;
 const EXAM_QUESTIONS = 40;
@@ -372,11 +374,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Fetch user profile from backend (includes admin check)
   await fetchUserProfile();
 
-  // Load questions
+  // Load questions (backend-first, static JSON fallback)
   await loadQuestions();
-
-  // Load custom questions from localStorage
-  loadCustomQuestions();
 
   // Check daily reset
   checkDailyReset();
@@ -386,14 +385,44 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function loadQuestions() {
+  // Single source of truth: backend DB (questions + categories)
+  try {
+    const [questions, categories] = await Promise.all([
+      apiGet('/api/questions'),
+      apiGet('/api/categories'),
+    ]);
+    if (Array.isArray(questions) && Array.isArray(categories)) {
+      questionsData = {
+        categories: normalizeCategories(categories),
+        questions: questions,
+      };
+      return;
+    }
+  } catch (e) {
+    console.warn('Backend questions unavailable, falling back to static JSON:', e);
+  }
+
+  // Fallback: static JSON (e.g. local dev without server)
   try {
     const response = await fetch('data/questions.json');
     questionsData = await response.json();
   } catch (e) {
     console.error('Failed to load questions:', e);
-    // Fallback: use embedded questions
     questionsData = { categories: [], questions: [] };
   }
+}
+
+// Normalize backend category (slug-based) to the shape the frontend expects
+function normalizeCategories(categories) {
+  return categories.map(c => ({
+    id: c.slug,
+    slug: c.slug,
+    name: c.name,
+    icon: c.icon,
+    color: c.color,
+    sort_order: c.sort_order,
+    count: c.count || 0,
+  }));
 }
 
 // ============================================
@@ -430,9 +459,44 @@ async function apiPost(path, body) {
     },
     body: JSON.stringify(body),
   });
+  return handleApiResponse(res);
+}
+
+async function apiPut(path, body) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(body),
+  });
+  return handleApiResponse(res);
+}
+
+async function apiDelete(path) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  return handleApiResponse(res);
+}
+
+async function apiUploadForm(path, formData) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: getAuthHeaders(), // no Content-Type — browser sets the boundary
+    body: formData,
+  });
+  return handleApiResponse(res);
+}
+
+async function handleApiResponse(res) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     const msg = err.error || `Server error (${res.status})`;
+    if (res.status === 401) throw new Error('Authorization required. Open via Telegram bot.');
+    if (res.status === 403) throw new Error('Access denied.');
     if (res.status >= 500) throw new Error('Server error. Try again later.');
     throw new Error(msg);
   }
@@ -669,7 +733,7 @@ function updateUI() {
 
 function renderCategories() {
   const container = document.getElementById('categories-list');
-  if (!questionsData || !questionsData.categories) return;
+  if (!container || !questionsData || !questionsData.categories) return;
 
   container.innerHTML = questionsData.categories.map(cat => {
     const count = questionsData.questions.filter(q => q.category === cat.id).length;
@@ -818,9 +882,51 @@ function switchTab(tabName) {
     updateProfile();
   }
 
+  // Load admin dashboard when opening the admin tab
+  if (tabName === 'admin') {
+    loadDashboard();
+  }
+
   // Haptic feedback
   if (window.Telegram?.WebApp?.HapticFeedback) {
     Telegram.WebApp.HapticFeedback.impactOccurred('light');
+  }
+}
+
+// ============================================
+// ANSWER SYNC (server stats, analytics, error limits)
+// ============================================
+async function submitAnswerToServer(questionId, selectedOptions) {
+  try {
+    const data = await apiPost('/api/answer', {
+      question_id: questionId,
+      selected_options: selectedOptions,
+    });
+
+    // Server stats are authoritative for analytics
+    if (data.stats) {
+      state.stats.totalAnswered = data.stats.total_answered;
+      state.stats.totalCorrect = data.stats.total_correct;
+      state.stats.streak = data.stats.streak;
+    }
+
+    // Sync subscription / error limit info
+    if (state.subscription) {
+      state.subscription.error_count = data.error_count;
+      state.subscription.error_limit = data.error_limit;
+      state.subscription.errors_remaining = data.errors_remaining;
+    }
+
+    // Server blocked adding this error (free plan limit reached)
+    if (data.error_blocked) {
+      const idx = state.errors.indexOf(questionId);
+      if (idx > -1) state.errors.splice(idx, 1);
+    }
+
+    saveState();
+  } catch (e) {
+    console.warn('Could not sync answer to server:', e);
+    // Local state stays as fallback (offline / dev without server)
   }
 }
 
@@ -988,6 +1094,7 @@ function checkAnswer() {
   if (quizState.answered) return;
   quizState.answered = true;
 
+
   const q = quizState.questions[quizState.currentIndex];
   const selected = quizState.selectedOptions.sort();
   const correct = [...q.correct_options].sort();
@@ -1018,6 +1125,9 @@ function checkAnswer() {
       return;
     }
   }
+
+  // Sync answer to server (analytics + error limits), fire-and-forget
+  submitAnswerToServer(q.id, quizState.selectedOptions);
 
   // Update stats
   state.stats.totalAnswered++;
@@ -1447,15 +1557,50 @@ function switchAdminTab(tab) {
   }
 }
 
+let editingQuestionId = null;
+
 function populateAdminCategories() {
+  // Reset edit state
+  editingQuestionId = null;
+
   const select = document.getElementById('admin-category');
   select.innerHTML = questionsData.categories.map(cat =>
     `<option value="${cat.id}">${cat.icon} ${cat.name}</option>`
   ).join('');
 
-  // Reset media type
+  resetQuestionForm();
+}
+
+function onMediaTypeChange(select) {
+  const group = document.getElementById('admin-media-group');
+  group.style.display = select.value !== 'none' ? 'block' : 'none';
+  if (select.value === 'none') {
+    document.getElementById('admin-media-preview').innerHTML = '';
+    document.getElementById('admin-media-upload-status').textContent = '';
+    document.getElementById('admin-media-url').value = '';
+  }
+}
+
+function resetQuestionForm() {
+  editingQuestionId = null;
+
+  // Reset media
   document.getElementById('admin-media-type').value = 'none';
   document.getElementById('admin-media-group').style.display = 'none';
+  document.getElementById('admin-media-url').value = '';
+  document.getElementById('admin-media-file').value = '';
+  document.getElementById('admin-media-preview').innerHTML = '';
+  document.getElementById('admin-media-upload-status').textContent = '';
+
+  // Reset text fields
+  document.getElementById('admin-question').value = '';
+  document.getElementById('admin-explanation').value = '';
+  document.getElementById('admin-difficulty').value = 'easy';
+  document.getElementById('admin-choice-type').value = 'single';
+
+  // Reset save button label
+  const saveBtn = document.getElementById('admin-save-btn');
+  if (saveBtn) saveBtn.textContent = '💾 Сохранить вопрос';
 
   // Reset options
   document.getElementById('admin-options-list').innerHTML = `
@@ -1468,12 +1613,62 @@ function populateAdminCategories() {
       <label class="checkbox-label"><input type="checkbox"> ✓</label>
     </div>
   `;
+}
 
-  // Media type change
-  document.getElementById('admin-media-type').addEventListener('change', function() {
-    document.getElementById('admin-media-group').style.display =
-      this.value !== 'none' ? 'block' : 'none';
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function fillQuestionForm(q) {
+  document.getElementById('admin-category').value = q.category || '';
+  document.getElementById('admin-question').value = q.question || '';
+  document.getElementById('admin-media-type').value = q.media_type || 'none';
+  onMediaTypeChange(document.getElementById('admin-media-type'));
+  document.getElementById('admin-media-url').value = q.media_url || '';
+  if (q.media_url) {
+    showMediaPreview(q.media_url, q.media_type === 'video');
+  }
+  document.getElementById('admin-explanation').value = q.explanation || '';
+  document.getElementById('admin-difficulty').value = q.difficulty || 'easy';
+  document.getElementById('admin-choice-type').value = q.multiple_choice ? 'multiple' : 'single';
+
+  // Options
+  const container = document.getElementById('admin-options-list');
+  container.innerHTML = '';
+  (q.options || []).forEach((opt, idx) => {
+    const row = document.createElement('div');
+    row.className = 'option-row';
+    row.innerHTML = `
+      <input type="text" class="input-field" placeholder="Вариант ${idx + 1}" value="${escapeHtml(opt)}">
+      <label class="checkbox-label"><input type="checkbox" ${(q.correct_options || []).includes(idx) ? 'checked' : ''}> ✓</label>
+    `;
+    container.appendChild(row);
   });
+  if (!q.options || q.options.length === 0) {
+    addAdminOption();
+    addAdminOption();
+  }
+}
+
+function editQuestion(id) {
+  const q = questionsData.questions.find(x => x.id === id);
+  if (!q) return;
+
+  // Activate the create panel
+  document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('admin-tab-create').classList.add('active');
+  document.querySelectorAll('.admin-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('admin-create').classList.add('active');
+
+  populateAdminCategories(); // resets form + editing state
+  editingQuestionId = id;
+  fillQuestionForm(q);
+  const saveBtn = document.getElementById('admin-save-btn');
+  if (saveBtn) saveBtn.textContent = '💾 Сохранить изменения';
 }
 
 function addAdminOption() {
@@ -1488,7 +1683,7 @@ function addAdminOption() {
   container.appendChild(row);
 }
 
-function saveQuestion() {
+async function saveQuestion() {
   const category = document.getElementById('admin-category').value;
   const questionText = document.getElementById('admin-question').value.trim();
   const mediaType = document.getElementById('admin-media-type').value;
@@ -1532,10 +1727,7 @@ function saveQuestion() {
     return;
   }
 
-  // Create new question
-  const maxId = Math.max(...questionsData.questions.map(q => q.id), 0);
-  const newQuestion = {
-    id: maxId + 1,
+  const payload = {
     category: category,
     question: questionText,
     media_type: mediaType,
@@ -1547,36 +1739,105 @@ function saveQuestion() {
     difficulty: difficulty,
   };
 
-  questionsData.questions.push(newQuestion);
-  saveQuestionsData();
+  try {
+    if (editingQuestionId) {
+      await apiPut(`/api/questions/${editingQuestionId}`, payload);
+    } else {
+      await apiPost('/api/questions', payload);
+    }
+    await loadQuestions();
+    renderAdminQuestionsList();
+    resetQuestionForm();
+    alert('✅ Вопрос сохранён в базу!');
+  } catch (e) {
+    console.warn('Could not save question to server, saving locally:', e);
+    // Fallback: keep local-only (e.g. dev without server)
+    if (editingQuestionId) {
+      const idx = questionsData.questions.findIndex(q => q.id === editingQuestionId);
+      if (idx > -1) questionsData.questions[idx] = { ...questionsData.questions[idx], ...payload };
+    } else {
+      const maxId = Math.max(...questionsData.questions.map(q => q.id), 0);
+      questionsData.questions.push({ id: maxId + 1, ...payload });
+    }
+    saveQuestionsData();
+    renderAdminQuestionsList();
+    resetQuestionForm();
+    alert('⚠️ Сервер недоступен — вопрос сохранён локально.\n' + e.message);
+  }
+}
 
-  alert('✅ Вопрос сохранён!');
+// ============================================
+// ADMIN: MEDIA UPLOAD
+// ============================================
+async function handleMediaFile(input) {
+  const file = input.files[0];
+  if (!file) return;
 
-  // Reset form
-  document.getElementById('admin-question').value = '';
-  document.getElementById('admin-explanation').value = '';
-  document.getElementById('admin-media-url').value = '';
-  document.getElementById('admin-difficulty').value = 'easy';
-  populateAdminCategories();
+  const statusEl = document.getElementById('admin-media-upload-status');
+  const mediaType = document.getElementById('admin-media-type').value;
+  const isVideo = mediaType === 'video' || file.type.startsWith('video/');
+
+  statusEl.textContent = '⏳ Загрузка...';
+
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    const data = await apiUploadForm('/api/upload', formData);
+    document.getElementById('admin-media-url').value = data.url;
+    statusEl.textContent = '✅ Файл загружен!';
+    showMediaPreview(data.url, isVideo);
+  } catch (e) {
+    console.error('Upload failed:', e);
+    statusEl.textContent = '❌ ' + e.message;
+  }
+}
+
+function showMediaPreview(url, isVideo) {
+  const preview = document.getElementById('admin-media-preview');
+  preview.innerHTML = isVideo
+    ? `<video src="${url}" controls muted playsinline style="max-width:100%;border-radius:12px;background:#000;"></video>`
+    : `<img src="${url}" alt="Превью" style="max-width:100%;border-radius:12px;">`;
+}
+
+function previewMediaFromUrl(value) {
+  if (!value) {
+    document.getElementById('admin-media-preview').innerHTML = '';
+    return;
+  }
+  const mediaType = document.getElementById('admin-media-type').value;
+  showMediaPreview(value, mediaType === 'video');
 }
 
 function renderAdminQuestionsList() {
   const container = document.getElementById('admin-questions-list');
-  container.innerHTML = questionsData.questions.map(q => `
+  if (!container || !questionsData || !questionsData.questions) return;
+
+  const sorted = [...questionsData.questions].sort((a, b) => a.id - b.id);
+  container.innerHTML = sorted.map(q => `
     <div class="admin-question-card">
       <span class="admin-q-id">#${q.id}</span>
-      <span class="admin-q-text">${q.question}</span>
-      <button class="admin-q-delete" onclick="deleteQuestion(${q.id})">🗑️</button>
+      <span class="admin-q-text">${escapeHtml(q.question)}</span>
+      ${q.media_type !== 'none' ? `<span class="admin-q-media">${q.media_type === 'image' ? '🖼️' : '🎬'}</span>` : ''}
+      <button class="admin-q-edit" onclick="editQuestion(${q.id})" title="Редактировать">✏️</button>
+      <button class="admin-q-delete" onclick="deleteQuestion(${q.id})" title="Удалить">🗑️</button>
     </div>
-  `).join('');
+  `).join('') || '<p style="color:var(--tg-theme-hint-color);">Пока нет вопросов</p>';
 }
 
-function deleteQuestion(id) {
+async function deleteQuestion(id) {
   if (!confirm('Удалить вопрос #' + id + '?')) return;
 
-  questionsData.questions = questionsData.questions.filter(q => q.id !== id);
-  saveQuestionsData();
-  renderAdminQuestionsList();
+  try {
+    await apiDelete(`/api/questions/${id}`);
+    await loadQuestions();
+    renderAdminQuestionsList();
+    alert('✅ Вопрос удалён');
+  } catch (e) {
+    console.warn('Could not delete from server, removing locally:', e);
+    questionsData.questions = questionsData.questions.filter(q => q.id !== id);
+    saveQuestionsData();
+    renderAdminQuestionsList();
+  }
 }
 
 function saveQuestionsData() {
@@ -1587,18 +1848,6 @@ function saveQuestionsData() {
   }
 }
 
-// Load custom questions from localStorage
-function loadCustomQuestions() {
-  try {
-    const saved = localStorage.getItem('zholrules_questions');
-    if (saved) {
-      questionsData = JSON.parse(saved);
-    }
-  } catch (e) {
-    console.warn('Could not load custom questions:', e);
-  }
-}
-
 function renderExportPreview() {
   document.getElementById('export-preview').value = JSON.stringify(questionsData, null, 2);
 }
@@ -1606,9 +1855,13 @@ function renderExportPreview() {
 // ============================================
 // ADMIN: CATEGORIES MANAGEMENT
 // ============================================
+let adminCategoriesCache = [];
+let editingCategoryId = null;
+
 async function renderAdminCategoriesList() {
   try {
     const categories = await apiGet('/api/categories');
+    adminCategoriesCache = categories;
     const container = document.getElementById('categories-admin-list');
     container.innerHTML = categories.map(cat => `
       <div class="admin-question-card">
@@ -1620,15 +1873,44 @@ async function renderAdminCategoriesList() {
           </div>
         </div>
         <span style="width:24px;height:24px;border-radius:50%;background:${cat.color};display:inline-block;"></span>
-        <button class="admin-q-delete" onclick="deleteCategory(${cat.id})">🗑️</button>
+        <button class="admin-q-edit" onclick="editCategory(${cat.id})" title="Редактировать">✏️</button>
+        <button class="admin-q-delete" onclick="deleteCategory(${cat.id})" title="Удалить">🗑️</button>
       </div>
-    `).join('');
+    `).join('') || '<p style="color:var(--tg-theme-hint-color);">Пока нет категорий</p>';
   } catch (e) {
     console.error('Failed to load categories:', e);
+    document.getElementById('categories-admin-list').innerHTML = '<p style="color:var(--red);">Ошибка загрузки</p>';
   }
 }
 
-async function createCategory() {
+function resetCategoryForm() {
+  editingCategoryId = null;
+  document.getElementById('cat-name').value = '';
+  document.getElementById('cat-slug').value = '';
+  document.getElementById('cat-icon').value = '📚';
+  document.getElementById('cat-color-hex').value = '#FFB300';
+  document.getElementById('cat-color').value = '#FFB300';
+  const saveBtn = document.getElementById('cat-save-btn');
+  if (saveBtn) saveBtn.textContent = '➕ Добавить категорию';
+  const cancelBtn = document.getElementById('cat-cancel-btn');
+  if (cancelBtn) cancelBtn.style.display = 'none';
+}
+
+function editCategory(id) {
+  const cat = adminCategoriesCache.find(c => c.id === id);
+  if (!cat) return;
+
+  editingCategoryId = id;
+  document.getElementById('cat-name').value = cat.name;
+  document.getElementById('cat-slug').value = cat.slug;
+  document.getElementById('cat-icon').value = cat.icon || '📚';
+  document.getElementById('cat-color-hex').value = cat.color || '#FFB300';
+  document.getElementById('cat-color').value = cat.color || '#FFB300';
+  document.getElementById('cat-save-btn').textContent = '💾 Сохранить изменения';
+  document.getElementById('cat-cancel-btn').style.display = 'inline-block';
+}
+
+async function saveCategory() {
   const name = document.getElementById('cat-name').value.trim();
   const slug = document.getElementById('cat-slug').value.trim();
   const icon = document.getElementById('cat-icon').value.trim() || '📚';
@@ -1640,39 +1922,40 @@ async function createCategory() {
   }
 
   try {
-    const result = await apiPost('/api/categories', { name, slug, icon, color });
-    alert(`Категория «${result.name}» создана!`);
+    if (editingCategoryId) {
+      await apiPut(`/api/categories/${editingCategoryId}`, { name, slug, icon, color });
+      alert('✅ Категория обновлена!');
+    } else {
+      await apiPost('/api/categories', { name, slug, icon, color });
+      alert('✅ Категория создана!');
+    }
 
-    // Clear form
-    document.getElementById('cat-name').value = '';
-    document.getElementById('cat-slug').value = '';
-    document.getElementById('cat-icon').value = '📚';
-    document.getElementById('cat-color-hex').value = '#FFB300';
-    document.getElementById('cat-color').value = '#FFB300';
-
-    // Refresh list
-    renderAdminCategoriesList();
+    await refreshCategories();
+    resetCategoryForm();
   } catch (e) {
     alert(`Ошибка: ${e.message}`);
   }
 }
 
 async function deleteCategory(id) {
-  if (!confirm('Удалить эту категорию?')) return;
+  if (!confirm('Удалить эту категорию? Вопросы в ней останутся, но останутся без категории.')) return;
 
   try {
-    await apiGet(`/api/categories/${id}`);  // not really needed, just for consistency
-    // Use fetch directly for DELETE since we have apiGet but not apiDelete
-    const res = await fetch(`${API_BASE}/api/categories/${id}`, {
-      method: 'DELETE',
-      headers: getAuthHeaders(),
-    });
-    if (!res.ok) throw new Error(`API error: ${res.status}`);
-
-    renderAdminCategoriesList();
+    await apiDelete(`/api/categories/${id}`);
+    await refreshCategories();
+    alert('✅ Категория удалена');
   } catch (e) {
     alert(`Ошибка: ${e.message}`);
   }
+}
+
+// Sync categories from backend into quiz data + admin lists
+async function refreshCategories() {
+  const categories = await apiGet('/api/categories');
+  questionsData.categories = normalizeCategories(categories);
+  renderAdminCategoriesList();
+  renderStudyCategories();
+  if (typeof updateProfile === 'function') updateProfile();
 }
 
 function exportJSON() {
@@ -2042,8 +2325,8 @@ let compAnswered = false;
 function initCompetitionSocket() {
   if (compSocket) return compSocket;
 
-  const serverUrl = window.location.hostname === 'localhost'
-    ? 'http://localhost:5000'
+  const serverUrl = IS_LOCAL_DEV
+    ? `${window.location.protocol}//${window.location.hostname}:5000`
     : 'https://zholrules.onrender.com';
 
   compSocket = io(serverUrl, {

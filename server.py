@@ -5,6 +5,7 @@ Telegram Mini App для ПДД Казахстана
 
 import os
 import json
+import uuid
 import hashlib
 import hmac
 import time
@@ -25,12 +26,41 @@ from urllib.parse import unquote
 load_dotenv()
 
 # ============================================
+# MEDIA STORAGE (Cloudinary optional)
+# ============================================
+try:
+    import cloudinary
+    import cloudinary.uploader
+    _CLOUDINARY_AVAILABLE = True
+except ImportError:
+    _CLOUDINARY_AVAILABLE = False
+
+CLOUDINARY_CONFIGURED = (
+    _CLOUDINARY_AVAILABLE
+    and bool(os.getenv('CLOUDINARY_CLOUD_NAME'))
+    and bool(os.getenv('CLOUDINARY_API_KEY'))
+    and bool(os.getenv('CLOUDINARY_API_SECRET'))
+)
+if CLOUDINARY_CONFIGURED:
+    cloudinary.config(
+        cloud_name=os.getenv('CLOUDINARY_CLOUD_NAME'),
+        api_key=os.getenv('CLOUDINARY_API_KEY'),
+        api_secret=os.getenv('CLOUDINARY_API_SECRET'),
+    )
+    logger.info('Cloudinary storage configured')
+
+# ============================================
 # APP INIT
 # ============================================
 app = Flask(__name__, static_folder='.', static_url_path='')
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///zholrules.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB for media uploads
+
+# Media uploads: local fallback folder
+MEDIA_FOLDER = os.getenv('MEDIA_FOLDER', 'uploads')
+os.makedirs(MEDIA_FOLDER, exist_ok=True)
 
 # CORS — only allow own domains
 CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'https://angelok-5725.github.io').split(',')
@@ -375,6 +405,63 @@ def static_files(path):
 
 
 # ============================================
+# API: MEDIA UPLOAD
+# ============================================
+ALLOWED_MEDIA_EXTENSIONS = {
+    '.png', '.jpg', '.jpeg', '.gif', '.webp',
+    '.mp4', '.webm', '.mov', '.m4v',
+}
+
+
+@app.route('/api/upload', methods=['POST'])
+@require_auth
+@require_admin
+def upload_media():
+    """Upload an image or video for a question. Returns a public URL."""
+    if 'file' not in request.files:
+        return jsonify({'error': 'Файл не передан (поле file)'}), 400
+
+    file = request.files['file']
+    if not file.filename:
+        return jsonify({'error': 'Файл пуст'}), 400
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_MEDIA_EXTENSIONS:
+        return jsonify({
+            'error': f'Недопустимый формат «{ext}». Разрешены: ' + ', '.join(sorted(ALLOWED_MEDIA_EXTENSIONS))
+        }), 400
+
+    # Production: Cloudinary
+    if CLOUDINARY_CONFIGURED:
+        try:
+            result = cloudinary.uploader.upload(
+                file, resource_type='auto', folder='zholrules'
+            )
+            logger.info(f'Media uploaded to Cloudinary: {result.get("public_id")}')
+            return jsonify({
+                'url': result['secure_url'],
+                'public_id': result.get('public_id'),
+                'filename': file.filename,
+            }), 201
+        except Exception as e:
+            logger.error(f'Cloudinary upload failed: {e}')
+            return jsonify({'error': f'Ошибка загрузки в Cloudinary: {e}'}), 500
+
+    # Local fallback (dev mode / no Cloudinary configured)
+    filename = uuid.uuid4().hex + ext
+    file.save(os.path.join(MEDIA_FOLDER, filename))
+    url = request.url_root.rstrip('/') + '/uploads/' + filename
+    logger.info(f'Media saved locally: {filename}')
+    return jsonify({'url': url, 'filename': filename}), 201
+
+
+@app.route('/uploads/<path:filename>')
+def uploaded_media(filename):
+    """Serve locally uploaded media files."""
+    return send_from_directory(MEDIA_FOLDER, filename)
+
+
+# ============================================
 # API: USER
 # ============================================
 @app.route('/api/user', methods=['GET'])
@@ -501,6 +588,38 @@ def create_question():
     return jsonify(question.to_dict()), 201
 
 
+@app.route('/api/questions/<int:question_id>', methods=['PUT'])
+@require_auth
+@require_admin
+def update_question(question_id):
+    """Update an existing question (admin only)."""
+    q = Question.query.get_or_404(question_id)
+    data = request.get_json()
+
+    if 'category' in data:
+        q.category = data['category']
+    if 'question' in data:
+        q.question = data['question']
+    if 'media_type' in data:
+        q.media_type = data['media_type']
+    if 'media_url' in data:
+        q.media_url = data['media_url']
+    if 'multiple_choice' in data:
+        q.multiple_choice = bool(data['multiple_choice'])
+    if 'options' in data:
+        q.options = json.dumps(data['options'])
+    if 'correct_options' in data:
+        q.correct_options = json.dumps(data['correct_options'])
+    if 'explanation' in data:
+        q.explanation = data['explanation']
+    if 'difficulty' in data:
+        q.difficulty = data['difficulty']
+
+    db.session.commit()
+    logger.info(f'Question updated: id={question_id}')
+    return jsonify(q.to_dict())
+
+
 @app.route('/api/questions/<int:question_id>', methods=['DELETE'])
 @require_auth
 @require_admin
@@ -590,7 +709,7 @@ def submit_answer():
     # Update user stats
     stats = user.stats
     if not stats:
-        stats = UserStats(user=user)
+        stats = UserStats(user=user, total_answered=0, total_correct=0, streak=0)
         db.session.add(stats)
 
     stats.total_answered += 1
@@ -603,7 +722,9 @@ def submit_answer():
     ).first()
 
     if not cat_stats:
-        cat_stats = UserCategoryStats(user_id=user.id, category_id=question.category)
+        cat_stats = UserCategoryStats(
+            user_id=user.id, category_id=question.category, answered=0, correct=0
+        )
         db.session.add(cat_stats)
 
     cat_stats.answered += 1

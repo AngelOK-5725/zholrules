@@ -41,6 +41,9 @@ Pillow==11.0.0
 # File uploads
 werkzeug==3.1.3
 
+# Media storage (Cloudinary — images & videos)
+cloudinary==1.46.2
+
 # Testing
 pytest==8.3.4
 pytest-flask==1.3.0

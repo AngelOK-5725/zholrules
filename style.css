@@ -1937,6 +1937,41 @@ textarea.input-field {
   color: var(--red);
 }
 
+.admin-q-edit {
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px;
+  color: var(--primary);
+}
+
+.admin-q-media {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+/* Admin media upload */
+.media-upload-status {
+  font-size: 13px;
+  color: var(--tg-theme-hint-color);
+  margin-top: 6px;
+  min-height: 18px;
+}
+
+.media-preview {
+  margin-top: 10px;
+}
+
+.media-preview img,
+.media-preview video {
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  background: var(--tg-theme-secondary-bg-color);
+}
+
 /* Export */
 .export-info {
   padding: 16px;

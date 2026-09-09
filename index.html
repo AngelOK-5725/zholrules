@@ -366,7 +366,8 @@
         <button class="admin-tab active" onclick="switchAdminTab('dashboard')">📊 Дашборд</button>
         <button class="admin-tab" onclick="switchAdminTab('settings')">⚙️ Настройки</button>
         <button class="admin-tab" onclick="switchAdminTab('users')">👥 Юзеры</button>
-        <button class="admin-tab" onclick="switchAdminTab('create')">➕ Вопрос</button>
+        <button class="admin-tab" id="admin-tab-create" onclick="switchAdminTab('create')">➕ Вопрос</button>
+        <button class="admin-tab" id="admin-tab-categories" onclick="switchAdminTab('categories')">🗂️ Категории</button>
         <button class="admin-tab" onclick="switchAdminTab('list')">📋 Список</button>
         <button class="admin-tab" onclick="switchAdminTab('export')">📥 Экспорт</button>
       </div>
@@ -425,15 +426,19 @@
         </div>
         <div class="form-group">
           <label>Тип контента</label>
-          <select id="admin-media-type" class="input-field">
+          <select id="admin-media-type" class="input-field" onchange="onMediaTypeChange(this)">
             <option value="none">Без медиа</option>
             <option value="image">Фото</option>
             <option value="video">Видео</option>
           </select>
         </div>
         <div class="form-group" id="admin-media-group" style="display:none;">
-          <label>URL медиафайла</label>
-          <input type="text" id="admin-media-url" class="input-field" placeholder="https://...">
+          <label>Загрузить файл (картинка или видео)</label>
+          <input type="file" id="admin-media-file" class="input-field" accept="image/*,video/*" onchange="handleMediaFile(this)">
+          <div class="media-upload-status" id="admin-media-upload-status"></div>
+          <div class="media-preview" id="admin-media-preview"></div>
+          <label style="margin-top:10px;">Или укажите URL медиафайла</label>
+          <input type="text" id="admin-media-url" class="input-field" placeholder="https://..." oninput="previewMediaFromUrl(this.value)">
         </div>
         <div class="form-group">
           <label>Варианты ответов (минимум 2)</label>
@@ -468,7 +473,7 @@
             <option value="hard">Сложный</option>
           </select>
         </div>
-        <button class="btn btn-primary" onclick="saveQuestion()">💾 Сохранить вопрос</button>
+        <button class="btn btn-primary" id="admin-save-btn" onclick="saveQuestion()">💾 Сохранить вопрос</button>
       </div>
 
       <!-- Question List -->
@@ -501,7 +506,10 @@
             <input type="text" id="cat-color-hex" class="input-field" value="#FFB300" style="flex:1;" oninput="document.getElementById('cat-color').value=this.value">
           </div>
         </div>
-        <button class="btn btn-primary" onclick="createCategory()">➕ Добавить категорию</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary" id="cat-save-btn" onclick="saveCategory()" style="flex:1;">➕ Добавить категорию</button>
+          <button class="btn btn-secondary btn-small" id="cat-cancel-btn" onclick="resetCategoryForm()" style="display:none;">Отмена</button>
+        </div>
 
         <div id="categories-admin-list" style="margin-top:24px;">
           <!-- Filled by JS -->
