@@ -302,11 +302,29 @@ const API_BASE = IS_LOCAL_DEV
   ? `${window.location.protocol}//${window.location.hostname}:5000`
   : 'https://zholrules.onrender.com';
 const QUESTIONS_PER_MIX = 20;
-const EXAM_QUESTIONS = 40;
-const EXAM_TIME_MINUTES = 40;
-const MAX_DAILY_LIVES = 3;
-const DAILY_QUESTIONS_TARGET = 10;
-const MINI_GAME_DURATION = 60; // seconds
+
+// Gameplay settings — defaults; overridden from /api/settings/public (no-code)
+let appSettings = {
+  exam_questions: 40,
+  exam_time_minutes: 40,
+  mini_game_duration: 60,
+  daily_questions_target: 10,
+  max_daily_lives: 3,
+  free_error_limit: 10,
+  pro_stars_price: 1500,
+  lives_stars_price: 5,
+};
+
+async function loadPublicSettings() {
+  try {
+    const s = await apiGet('/api/settings/public');
+    if (s && typeof s === 'object') {
+      Object.assign(appSettings, s);
+    }
+  } catch (e) {
+    console.warn('Gameplay settings unavailable, using defaults:', e);
+  }
+}
 
 // ============================================
 // STATE
@@ -327,7 +345,7 @@ let state = {
     streak: 0,
     lastActiveDate: '',
     stars: 0,
-    lives: MAX_DAILY_LIVES,
+    lives: appSettings.max_daily_lives,
     livesResetDate: '',
     gameHighScore: 0,
   },
@@ -373,6 +391,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Fetch user profile from backend (includes admin check)
   await fetchUserProfile();
+
+  // Load gameplay settings (no-code: exam size, time, lives...)
+  await loadPublicSettings();
 
   // Load questions (backend-first, static JSON fallback)
   await loadQuestions();
@@ -474,6 +495,18 @@ async function apiPut(path, body) {
   return handleApiResponse(res);
 }
 
+async function apiPatch(path, body) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(body),
+  });
+  return handleApiResponse(res);
+}
+
 async function apiDelete(path) {
   const res = await fetch(`${API_BASE}${path}`, {
     method: 'DELETE',
@@ -519,7 +552,7 @@ async function fetchUserProfile() {
       state.stats.totalCorrect = data.stats.total_correct || 0;
       state.stats.streak = data.stats.streak || 0;
       state.stats.stars = data.stats.stars || 0;
-      state.stats.lives = data.stats.lives ?? MAX_DAILY_LIVES;
+      state.stats.lives = data.stats.lives ?? appSettings.max_daily_lives;
       state.stats.gameHighScore = data.stats.game_high_score || 0;
     }
     if (data.category_stats) {
@@ -608,7 +641,7 @@ function checkDailyReset() {
 
     // Reset lives
     if (state.stats.livesResetDate !== today) {
-      state.stats.lives = MAX_DAILY_LIVES;
+      state.stats.lives = appSettings.max_daily_lives;
       state.stats.livesResetDate = today;
     }
 
@@ -654,9 +687,9 @@ async function completeOnboarding() {
   state.onboardingDone = true;
   saveState();
 
-  // Sync with backend
+  // Sync with backend (PATCH — the endpoint that exists)
   try {
-    await apiPost('/api/user', {
+    await apiPatch('/api/user', {
       name: state.user.name,
       goal: state.user.goal,
       exam_date: examDate,
@@ -688,9 +721,10 @@ function updateUI() {
   if (homeName) homeName.textContent = state.user.name || 'друг';
 
   // Daily progress
-  const progress = Math.min(100, (state.stats.dailyAnswered / DAILY_QUESTIONS_TARGET) * 100);
+  const target = parseInt(appSettings.daily_questions_target, 10) || 10;
+  const progress = Math.min(100, (state.stats.dailyAnswered / target) * 100);
   document.getElementById('daily-progress').style.width = `${progress}%`;
-  document.getElementById('daily-progress-text').textContent = `${state.stats.dailyAnswered} / ${DAILY_QUESTIONS_TARGET} вопросов сегодня`;
+  document.getElementById('daily-progress-text').textContent = `${state.stats.dailyAnswered} / ${target} вопросов сегодня`;
   document.getElementById('daily-streak').textContent = state.stats.streak;
 
   // Continue card
@@ -724,32 +758,32 @@ function updateUI() {
   document.getElementById('errors-count').textContent = `${state.errors.length} вопросов`;
 
   // Categories
-  renderCategories();
+  renderSignCategories();
   renderStudyCategories();
 
   // Profile
   updateProfile();
 }
 
-function renderCategories() {
-  const container = document.getElementById('categories-list');
+function renderSignCategories() {
+  // Top categories, rendered from real data (no-code friendly)
+  const container = document.getElementById('signs-categories-list');
   if (!container || !questionsData || !questionsData.categories) return;
 
-  container.innerHTML = questionsData.categories.map(cat => {
-    const count = questionsData.questions.filter(q => q.category === cat.id).length;
-    return `
-      <div class="category-item" onclick="startQuiz('topic', '${cat.id}')">
-        <div class="category-icon" style="background: ${cat.color}20; color: ${cat.color};">
-          ${cat.icon}
-        </div>
-        <div class="category-info">
-          <div class="category-name">${cat.name}</div>
-          <div class="category-count">${count} вопросов</div>
-        </div>
-        <span class="category-arrow">›</span>
+  const cats = [...questionsData.categories]
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    .slice(0, 6);
+
+  container.innerHTML = cats.map(cat => `
+    <div class="sign-category-card" style="border-color:${cat.color};" onclick="startQuiz('topic', '${cat.id}')">
+      <div class="sign-category-icon" style="background:${cat.color}20;">${cat.icon}</div>
+      <div class="sign-category-info">
+        <div class="sign-category-name">${cat.name}</div>
+        <div class="sign-category-count">${cat.count || 0} вопросов</div>
       </div>
-    `;
-  }).join('');
+      <span class="sign-category-arrow">›</span>
+    </div>
+  `).join('') || '<p style="color:var(--tg-theme-hint-color);">Добавьте категории в админке — появятся здесь</p>';
 }
 
 function renderStudyCategories() {
@@ -963,7 +997,8 @@ function startExam() {
   }
 
   const shuffled = shuffleArray([...questionsData.questions]);
-  quizState = createQuizSession(shuffled.slice(0, EXAM_QUESTIONS), 'exam');
+  const examSize = parseInt(appSettings.exam_questions, 10) || 40;
+  quizState = createQuizSession(shuffled.slice(0, examSize), 'exam');
   showQuizScreen();
 }
 
@@ -977,7 +1012,7 @@ function createQuizSession(questions, mode, categoryId) {
     wrongCount: 0,
     answered: false,
     selectedOptions: [],
-    timeRemaining: mode === 'exam' ? EXAM_TIME_MINUTES * 60 : null,
+    timeRemaining: mode === 'exam' ? (parseInt(appSettings.exam_time_minutes, 10) || 40) * 60 : null,
     startTime: Date.now(),
   };
 }
@@ -1144,6 +1179,23 @@ function checkAnswer() {
     state.stats.dailyCorrect++;
     state.categoryStats[q.category].correct++;
     quizState.correctCount++;
+
+    // Mastered an error — remove from local list and server
+    if (state.errors.includes(q.id)) {
+      state.errors = state.errors.filter(id => id !== q.id);
+      apiDelete(`/api/errors/${q.id}`).catch(e =>
+        console.warn('Could not remove error from server:', e)
+      );
+      if (state.subscription) {
+        state.subscription.error_count = Math.max(0, (state.subscription.error_count || 0) - 1);
+        if (state.subscription.error_limit) {
+          state.subscription.errors_remaining = Math.max(
+            0,
+            state.subscription.error_limit - state.subscription.error_count
+          );
+        }
+      }
+    }
   } else {
     // Add to errors (if not already there)
     if (!state.errors.includes(q.id)) {
@@ -1386,7 +1438,7 @@ function startMiniGame() {
     maxCombo: 0,
     correctCount: 0,
     totalCount: 0,
-    timeRemaining: MINI_GAME_DURATION,
+    timeRemaining: parseInt(appSettings.mini_game_duration, 10) || 60,
     currentQuestion: null,
     answered: false,
   };
@@ -1439,6 +1491,9 @@ function answerGameOption(index) {
 
   const q = gameState.currentQuestion;
   const isCorrect = q.correct_options.includes(index);
+
+  // Sync answer to server (analytics), fire-and-forget
+  submitAnswerToServer(q.id, [index]);
 
   gameState.totalCount++;
 
@@ -1537,7 +1592,10 @@ function switchAdminTab(tab) {
   document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.admin-panel').forEach(p => p.classList.remove('active'));
 
-  event.currentTarget.classList.add('active');
+  // Works from onclick AND from programmatic calls (e.g. after saving)
+  const btn = (typeof event !== 'undefined' && event && event.currentTarget)
+    || document.getElementById(`admin-tab-${tab}`);
+  if (btn) btn.classList.add('active');
   document.getElementById(`admin-${tab}`).classList.add('active');
 
   if (tab === 'dashboard') {
@@ -1808,20 +1866,56 @@ function previewMediaFromUrl(value) {
   showMediaPreview(value, mediaType === 'video');
 }
 
+let adminQuestionSearch = '';
+let adminQuestionPage = 1;
+const ADMIN_PAGE_SIZE = 20;
+
 function renderAdminQuestionsList() {
   const container = document.getElementById('admin-questions-list');
   if (!container || !questionsData || !questionsData.questions) return;
 
-  const sorted = [...questionsData.questions].sort((a, b) => a.id - b.id);
-  container.innerHTML = sorted.map(q => `
+  const query = (adminQuestionSearch || '').toLowerCase().trim();
+  let filtered = [...questionsData.questions];
+  if (query) {
+    filtered = filtered.filter(item =>
+      item.question.toLowerCase().includes(query) ||
+      String(item.category).toLowerCase().includes(query)
+    );
+  }
+  filtered.sort((a, b) => a.id - b.id);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / ADMIN_PAGE_SIZE));
+  if (adminQuestionPage > totalPages) adminQuestionPage = totalPages;
+  const start = (adminQuestionPage - 1) * ADMIN_PAGE_SIZE;
+  const pageItems = filtered.slice(start, start + ADMIN_PAGE_SIZE);
+
+  container.innerHTML = pageItems.map(item => `
     <div class="admin-question-card">
-      <span class="admin-q-id">#${q.id}</span>
-      <span class="admin-q-text">${escapeHtml(q.question)}</span>
-      ${q.media_type !== 'none' ? `<span class="admin-q-media">${q.media_type === 'image' ? '🖼️' : '🎬'}</span>` : ''}
-      <button class="admin-q-edit" onclick="editQuestion(${q.id})" title="Редактировать">✏️</button>
-      <button class="admin-q-delete" onclick="deleteQuestion(${q.id})" title="Удалить">🗑️</button>
+      <span class="admin-q-id">#${item.id}</span>
+      <span class="admin-q-text">${escapeHtml(item.question)}</span>
+      ${item.media_type !== 'none' ? `<span class="admin-q-media">${item.media_type === 'image' ? '🖼️' : '🎬'}</span>` : ''}
+      <button class="admin-q-edit" onclick="editQuestion(${item.id})" title="Редактировать">✏️</button>
+      <button class="admin-q-delete" onclick="deleteQuestion(${item.id})" title="Удалить">🗑️</button>
     </div>
-  `).join('') || '<p style="color:var(--tg-theme-hint-color);">Пока нет вопросов</p>';
+  `).join('') || '<p style="color:var(--tg-theme-hint-color);">Ничего не найдено</p>';
+
+  // Pager
+  const pager = document.getElementById('admin-questions-pager');
+  if (pager) {
+    const from = filtered.length === 0 ? 0 : start + 1;
+    const to = Math.min(start + ADMIN_PAGE_SIZE, filtered.length);
+    pager.innerHTML = `
+      <button class="btn btn-secondary btn-small" onclick="adminQuestionPage--;renderAdminQuestionsList();" ${adminQuestionPage <= 1 ? 'disabled' : ''}>←</button>
+      <span class="admin-pager-info">${from}–${to} из ${filtered.length}</span>
+      <button class="btn btn-secondary btn-small" onclick="adminQuestionPage++;renderAdminQuestionsList();" ${adminQuestionPage >= totalPages ? 'disabled' : ''}>→</button>
+    `;
+  }
+}
+
+function onAdminQuestionSearch(value) {
+  adminQuestionSearch = value;
+  adminQuestionPage = 1;
+  renderAdminQuestionsList();
 }
 
 async function deleteQuestion(id) {
@@ -1954,6 +2048,7 @@ async function refreshCategories() {
   const categories = await apiGet('/api/categories');
   questionsData.categories = normalizeCategories(categories);
   renderAdminCategoriesList();
+  renderSignCategories();
   renderStudyCategories();
   if (typeof updateProfile === 'function') updateProfile();
 }
@@ -2125,6 +2220,30 @@ function renderDashboard(data) {
     <div class="dashboard-stat">
       <div class="dashboard-stat-value">${data.pro_users}</div>
       <div class="dashboard-stat-label">Pro подписчиков</div>
+    </div>
+    <div class="dashboard-stat">
+      <div class="dashboard-stat-value">${data.pro_conversion ?? 0}%</div>
+      <div class="dashboard-stat-label">Конверсия в Pro</div>
+    </div>
+    <div class="dashboard-stat">
+      <div class="dashboard-stat-value">${data.dau_wau ?? 0}%</div>
+      <div class="dashboard-stat-label">Липкость DAU/WAU</div>
+    </div>
+    <div class="dashboard-stat">
+      <div class="dashboard-stat-value">${data.new_users_week ?? 0}</div>
+      <div class="dashboard-stat-label">Новых за неделю</div>
+    </div>
+    <div class="dashboard-stat">
+      <div class="dashboard-stat-value">${data.retention_day1 ?? 0}%</div>
+      <div class="dashboard-stat-label">Возврат на 1-й день</div>
+    </div>
+    <div class="dashboard-stat">
+      <div class="dashboard-stat-value">${data.retention_day7 ?? 0}%</div>
+      <div class="dashboard-stat-label">Возврат на 7-й день</div>
+    </div>
+    <div class="dashboard-stat">
+      <div class="dashboard-stat-value">${data.retention_day30 ?? 0}%</div>
+      <div class="dashboard-stat-label">Возврат на 30-й день</div>
     </div>
     <div class="dashboard-stat">
       <div class="dashboard-stat-value">${data.total_answered}</div>

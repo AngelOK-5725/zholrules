@@ -16,6 +16,8 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from dotenv import load_dotenv
 from loguru import logger
 from urllib.parse import unquote
@@ -61,6 +63,16 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB for media uploads
 # Media uploads: local fallback folder
 MEDIA_FOLDER = os.getenv('MEDIA_FOLDER', 'uploads')
 os.makedirs(MEDIA_FOLDER, exist_ok=True)
+
+# ============================================
+# RATE LIMITING (protect public endpoints)
+# ============================================
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=[os.getenv('RATE_LIMIT_DEFAULT', '200 per minute')],
+    storage_uri='memory://',
+)
 
 # CORS — only allow own domains
 CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'https://angelok-5725.github.io').split(',')
@@ -204,6 +216,17 @@ class Setting(db.Model):
             'description': self.description,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class DailyActivity(db.Model):
+    """Daily activity counter per user — powers real cohort retention."""
+    __tablename__ = 'daily_activity'
+    __table_args__ = (db.UniqueConstraint('user_id', 'activity_date', name='uq_daily_activity_user_date'),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    activity_date = db.Column(db.String(20), nullable=False)  # YYYY-MM-DD
+    answers = db.Column(db.Integer, default=0)
 
 
 class Competition(db.Model):
@@ -414,6 +437,7 @@ ALLOWED_MEDIA_EXTENSIONS = {
 
 
 @app.route('/api/upload', methods=['POST'])
+@limiter.limit('20 per minute')
 @require_auth
 @require_admin
 def upload_media():
@@ -686,6 +710,7 @@ def import_questions():
 # API: ANSWER
 # ============================================
 @app.route('/api/answer', methods=['POST'])
+@limiter.limit('120 per minute')
 @require_auth
 def submit_answer():
     """Submit an answer and update stats."""
@@ -730,6 +755,14 @@ def submit_answer():
     cat_stats.answered += 1
     if is_correct:
         cat_stats.correct += 1
+
+    # Daily activity counter (powers cohort retention)
+    activity_day = date.today().isoformat()
+    daily = DailyActivity.query.filter_by(user_id=user.id, activity_date=activity_day).first()
+    if not daily:
+        daily = DailyActivity(user_id=user.id, activity_date=activity_day, answers=0)
+        db.session.add(daily)
+    daily.answers += 1
 
     # Track errors + enforce free plan limit
     error_blocked = False
@@ -1034,6 +1067,22 @@ def init_default_settings():
     db.session.commit()
 
 
+@app.route('/api/settings/public', methods=['GET'])
+def get_public_settings():
+    """Gameplay settings used by the frontend (no admin required).
+    Values come from the DB so the owner can change them without redeploy.
+    """
+    keys = [
+        'exam_questions', 'exam_time_minutes', 'mini_game_duration',
+        'daily_questions_target', 'max_daily_lives', 'free_error_limit',
+        'pro_stars_price', 'lives_stars_price',
+    ]
+    return jsonify({
+        k: get_setting(k, DEFAULT_SETTINGS.get(k, {}).get('value', ''))
+        for k in keys
+    })
+
+
 # ============================================
 # SUBSCRIPTION HELPERS
 # ============================================
@@ -1172,29 +1221,9 @@ def get_subscription():
     })
 
 
-@app.route('/api/subscription/activate', methods=['POST'])
-@require_auth
-def activate_subscription():
-    """Activate Pro subscription (called after Telegram Stars payment)."""
-    tg_id = request.tg_user['id']
-    user = User.query.filter_by(tg_id=tg_id).first()
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
-
-    sub = get_user_subscription(user)
-    sub.plan = 'pro'
-    sub.is_active = True
-    sub.started_at = datetime.utcnow()
-    # 30 days from now
-    sub.expires_at = datetime.utcnow() + timedelta(days=30)
-    db.session.commit()
-
-    logger.info(f'Pro activated: user={tg_id}')
-    return jsonify({
-        'plan': 'pro',
-        'expires_at': sub.expires_at.isoformat(),
-        'message': 'Pro subscription activated!'
-    })
+# NOTE: Pro subscription is activated ONLY via the Telegram payment webhook
+# (see /webhook/telegram -> successful_payment). No self-service activation
+# endpoint exists on purpose — otherwise any user could grant themselves Pro.
 
 
 # ============================================
@@ -1681,6 +1710,17 @@ def handle_competition_answer(data):
     correct = json.loads(question.correct_options)
     is_correct = sorted(selected_options) == sorted(correct)
 
+    # Count competition answers into user stats (analytics)
+    user = User.query.filter_by(tg_id=user_id).first()
+    if user:
+        if not user.stats:
+            user.stats = UserStats(user=user, total_answered=0, total_correct=0, streak=0)
+            db.session.add(user.stats)
+        user.stats.total_answered += 1
+        if is_correct:
+            user.stats.total_correct += 1
+        db.session.commit()
+
     # Update score
     if is_correct:
         comp_data['scores'][user_id] = comp_data['scores'].get(user_id, 0) + 1
@@ -1888,6 +1928,34 @@ def get_analytics():
     # Pro subscribers
     pro_users = Subscription.query.filter_by(plan='pro', is_active=True).count()
 
+    # Sticky factor DAU/WAU (how often weekly users come back daily)
+    dau_wau = round((active_today / active_week * 100), 1) if active_week > 0 else 0
+
+    # New users this week (growth)
+    new_users_week = User.query.filter(User.created_at >= week_ago).count()
+
+    # Cohort retention from daily activity: of users who signed up N+1 days ago,
+    # how many were active exactly N days after signup
+    def cohort_retention(days):
+        cutoff = datetime.utcnow() - timedelta(days=days + 1)
+        cohort = User.query.filter(User.created_at <= cutoff).all()
+        if not cohort:
+            return 0
+        retained = 0
+        for u in cohort:
+            target = (u.created_at.date() + timedelta(days=days)).isoformat()
+            if DailyActivity.query.filter_by(user_id=u.id, activity_date=target).first():
+                retained += 1
+        return round((retained / len(cohort) * 100), 1)
+
+    retention_day1 = cohort_retention(1)
+    retention_day7 = cohort_retention(7)
+    retention_day30 = cohort_retention(30)
+
+    # Pro conversion: share of users who ever had Pro (bought or granted)
+    ever_pro = Subscription.query.filter_by(plan='pro').count()
+    pro_conversion = round((ever_pro / total_users * 100), 1) if total_users > 0 else 0
+
     # Competitions
     total_competitions = Competition.query.filter_by(status='finished').count()
 
@@ -1919,6 +1987,12 @@ def get_analytics():
         'total_correct': total_correct,
         'avg_accuracy': avg_accuracy,
         'pro_users': pro_users,
+        'dau_wau': dau_wau,
+        'new_users_week': new_users_week,
+        'retention_day1': retention_day1,
+        'retention_day7': retention_day7,
+        'retention_day30': retention_day30,
+        'pro_conversion': pro_conversion,
         'total_competitions': total_competitions,
         'top_users': top_list,
     })
@@ -1997,4 +2071,3 @@ if __name__ == '__main__':
 
     logger.info(f'ZholRules server starting on port {port}')
     socketio.run(app, host='0.0.0.0', port=port, debug=debug)
-    app.run(host='0.0.0.0', port=port, debug=debug)

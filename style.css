@@ -1972,6 +1972,24 @@ textarea.input-field {
   background: var(--tg-theme-secondary-bg-color);
 }
 
+/* Admin question list pager */
+.admin-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.admin-pager-info {
+  font-size: 13px;
+  color: var(--tg-theme-hint-color);
+}
+
+.admin-pager button:disabled {
+  opacity: 0.4;
+}
+
 /* Export */
 .export-info {
   padding: 16px;

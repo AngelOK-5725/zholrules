@@ -67,9 +67,18 @@ class TestValidateInitData:
         token = "test-bot-token-12345"
         init_data = make_fake_init_data(123, token)
 
-        # Tamper: change user id in the data
+        # Tamper: change the user data but keep the ORIGINAL hash.
+        # (The old version only reordered params, which validation sorts anyway,
+        #  so the tampered data stayed valid and the test always failed.)
         parts = init_data.split("&")
-        tampered = "&".join(parts[:-1]) + "&hash=" + parts[-1].split("=")[1]
+        new_parts = []
+        for p in parts:
+            if p.startswith("user="):
+                new_parts.append("user=" + '{"id": 999, "first_name": "Hacker"}')
+            else:
+                new_parts.append(p)
+        tampered = "&".join(new_parts)
+
         result = validate_telegram_webapp(tampered, token)
         assert result is None
         print("  PASS: Tampered data -> None")

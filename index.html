@@ -225,56 +225,9 @@
       <p style="color:var(--tg-theme-hint-color);margin-bottom:20px;font-size:14px;">Изучай правила по категориям</p>
 
       <!-- Signs Section -->
-      <h3 class="section-title">🚦 Дорожные знаки</h3>
-      <div class="signs-categories">
-        <div class="sign-category-card" style="border-color:#DC2626;" onclick="startQuiz('topic', 'warning-signs')">
-          <div class="sign-category-icon" style="background:#FEF2F2;">🔴</div>
-          <div class="sign-category-info">
-            <div class="sign-category-name">Предупреждающие</div>
-            <div class="sign-category-count">Треугольники</div>
-          </div>
-          <span class="sign-category-arrow">›</span>
-        </div>
-        <div class="sign-category-card" style="border-color:#2563EB;" onclick="startQuiz('topic', 'mandatory-signs')">
-          <div class="sign-category-icon" style="background:#EFF6FF;">🔵</div>
-          <div class="sign-category-info">
-            <div class="sign-category-name">Предписывающие</div>
-            <div class="sign-category-count">Круги</div>
-          </div>
-          <span class="sign-category-arrow">›</span>
-        </div>
-        <div class="sign-category-card" style="border-color:#DC2626;" onclick="startQuiz('topic', 'prohibitory-signs')">
-          <div class="sign-category-icon" style="background:#FEF2F2;">⛔</div>
-          <div class="sign-category-info">
-            <div class="sign-category-name">Запрещающие</div>
-            <div class="sign-category-count">Круги с полосой</div>
-          </div>
-          <span class="sign-category-arrow">›</span>
-        </div>
-        <div class="sign-category-card" style="border-color:#16A34A;" onclick="startQuiz('topic', 'info-signs')">
-          <div class="sign-category-icon" style="background:#F0FDF4;">🟢</div>
-          <div class="sign-category-info">
-            <div class="sign-category-name">Информационные</div>
-            <div class="sign-category-count">Прямоугольники</div>
-          </div>
-          <span class="sign-category-arrow">›</span>
-        </div>
-        <div class="sign-category-card" style="border-color:#F59E0B;" onclick="startQuiz('topic', 'priority-signs')">
-          <div class="sign-category-icon" style="background:#FFFBEB;">🟡</div>
-          <div class="sign-category-info">
-            <div class="sign-category-name">Приоритета</div>
-            <div class="sign-category-count">Ромбы</div>
-          </div>
-          <span class="sign-category-arrow">›</span>
-        </div>
-        <div class="sign-category-card" style="border-color:#7C3AED;" onclick="startQuiz('topic', 'service-signs')">
-          <div class="sign-category-icon" style="background:#F5F3FF;">🟣</div>
-          <div class="sign-category-info">
-            <div class="sign-category-name">Знаки сервиса</div>
-            <div class="sign-category-count">Синие квадраты</div>
-          </div>
-          <span class="sign-category-arrow">›</span>
-        </div>
+      <h3 class="section-title">🚀 Основные темы</h3>
+      <div class="signs-categories" id="signs-categories-list">
+        <!-- Filled by JS from real categories -->
       </div>
 
       <!-- All Categories -->
@@ -363,13 +316,13 @@
       </div>
 
       <div class="admin-tabs">
-        <button class="admin-tab active" onclick="switchAdminTab('dashboard')">📊 Дашборд</button>
-        <button class="admin-tab" onclick="switchAdminTab('settings')">⚙️ Настройки</button>
-        <button class="admin-tab" onclick="switchAdminTab('users')">👥 Юзеры</button>
+        <button class="admin-tab active" id="admin-tab-dashboard" onclick="switchAdminTab('dashboard')">📊 Дашборд</button>
+        <button class="admin-tab" id="admin-tab-settings" onclick="switchAdminTab('settings')">⚙️ Настройки</button>
+        <button class="admin-tab" id="admin-tab-users" onclick="switchAdminTab('users')">👥 Юзеры</button>
         <button class="admin-tab" id="admin-tab-create" onclick="switchAdminTab('create')">➕ Вопрос</button>
         <button class="admin-tab" id="admin-tab-categories" onclick="switchAdminTab('categories')">🗂️ Категории</button>
-        <button class="admin-tab" onclick="switchAdminTab('list')">📋 Список</button>
-        <button class="admin-tab" onclick="switchAdminTab('export')">📥 Экспорт</button>
+        <button class="admin-tab" id="admin-tab-list" onclick="switchAdminTab('list')">📋 Список</button>
+        <button class="admin-tab" id="admin-tab-export" onclick="switchAdminTab('export')">📥 Экспорт</button>
       </div>
 
       <!-- Dashboard Panel -->
@@ -478,9 +431,13 @@
 
       <!-- Question List -->
       <div id="admin-list" class="admin-panel">
+        <div class="form-group">
+          <input type="text" id="admin-question-search" class="input-field" placeholder="🔍 Поиск по тексту или категории..." oninput="onAdminQuestionSearch(this.value)">
+        </div>
         <div id="admin-questions-list">
           <!-- Filled by JS -->
         </div>
+        <div id="admin-questions-pager" class="admin-pager"></div>
       </div>
 
       <!-- Categories Management -->
