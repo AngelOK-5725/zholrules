@@ -81,6 +81,46 @@ CORS(app, origins=CORS_ORIGINS)
 # SocketIO for real-time competition
 socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
 
+def sync_id_sequences():
+    """Self-heal Postgres id sequences that lag behind MAX(id).
+
+    Happens when rows are inserted with explicit ids (e.g. seeding questions
+    from data/questions.json, or a bulk import): in Postgres such inserts do
+    NOT advance the serial sequence, so the next plain INSERT reuses an
+    existing id and fails with UniqueViolation (questions_pkey).
+    """
+    if db.engine.dialect.name != 'postgresql':
+        return
+
+    tables = (
+        'questions', 'users', 'categories', 'settings', 'subscriptions',
+        'user_stats', 'user_category_stats', 'user_errors',
+        'daily_activity', 'competitions',
+    )
+    with db.engine.connect() as conn:
+        for table in tables:
+            try:
+                seq = conn.execute(
+                    db.text("SELECT pg_get_serial_sequence(:t, 'id')"),
+                    {'t': f'public.{table}'},
+                ).scalar()
+                if not seq:
+                    continue
+                max_id = conn.execute(
+                    db.text(f'SELECT COALESCE(MAX(id), 0) FROM {table}')
+                ).scalar()
+                if max_id:
+                    conn.execute(
+                        db.text(f"SELECT setval('{seq}', :v)"), {'v': max_id}
+                    )
+                else:
+                    # Empty table: reset so the next id is 1
+                    conn.execute(db.text(f"SELECT setval('{seq}', 1, false)"))
+                logger.debug(f'Sequence synced for {table}: next id = {max_id + 1}')
+            except Exception as e:
+                logger.warning(f'Sequence sync skipped for {table}: {e}')
+
+
 def ensure_question_columns():
     """Add new Question columns to an existing table (lightweight auto-migration).
 
@@ -1606,6 +1646,7 @@ def init_db():
     with app.app_context():
         db.create_all()
         ensure_question_columns()
+        sync_id_sequences()
 
         # Seed default categories if empty
         if Category.query.count() == 0:

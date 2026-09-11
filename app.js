@@ -465,7 +465,7 @@ async function apiGet(path) {
     if (res.status === 401) throw new Error('Authorization required. Open via Telegram bot.');
     if (res.status === 403) throw new Error('Access denied.');
     if (res.status === 404) throw new Error('Not found.');
-    if (res.status >= 500) throw new Error('Server error. Try again later.');
+    if (res.status >= 500) throw new Error(`Server error (${res.status}). Try again later.`);
     throw new Error(msg);
   }
   return res.json();
@@ -530,7 +530,7 @@ async function handleApiResponse(res) {
     const msg = err.error || `Server error (${res.status})`;
     if (res.status === 401) throw new Error('Authorization required. Open via Telegram bot.');
     if (res.status === 403) throw new Error('Access denied.');
-    if (res.status >= 500) throw new Error('Server error. Try again later.');
+    if (res.status >= 500) throw new Error(`Server error (${res.status}). Try again later.`);
     throw new Error(msg);
   }
   return res.json();
