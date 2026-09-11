@@ -427,6 +427,16 @@ textarea.input-field {
   color: var(--tg-theme-text-color);
 }
 
+.btn-danger {
+  background: var(--red, #F44336);
+  color: #fff;
+}
+
+.btn-danger:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
 .btn-large {
   padding: 18px 32px;
   font-size: 18px;

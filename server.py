@@ -1106,13 +1106,64 @@ def update_category(cat_id):
 @require_auth
 @require_admin
 def delete_category(cat_id):
-    """Delete a category (admin only)."""
+    """Delete a category (admin only).
+
+    Query params:
+      mode=delete  — cascade: also delete all questions in this category
+      mode=move    — move all questions to the category with id=<target>
+    Without params keeps the legacy behavior: delete the category only.
+    """
     cat = Category.query.get_or_404(cat_id)
     slug = cat.slug
+    mode = request.args.get('mode', '')
+    affected = Question.query.filter_by(category=slug).count()
+
+    if mode == 'delete':
+        Question.query.filter_by(category=slug).delete(
+            synchronize_session=False
+        )
+        db.session.delete(cat)
+        db.session.commit()
+        logger.info(
+            f'Category deleted with cascade: {slug} ({affected} questions removed)'
+        )
+        return jsonify({
+            'message': f'Deleted {slug} and {affected} questions',
+            'deleted_questions': affected,
+        }), 200
+
+    if mode == 'move':
+        target_id = request.args.get('target', type=int)
+        if not target_id:
+            return jsonify({'error': 'target category id required for mode=move'}), 400
+        target = Category.query.get(target_id)
+        if not target:
+            return jsonify({'error': 'Target category not found'}), 404
+        if target.id == cat.id:
+            return jsonify({'error': 'Target category is the same'}), 400
+
+        moved = Question.query.filter_by(category=slug).update(
+            {Question.category: target.slug}, synchronize_session=False
+        )
+        db.session.delete(cat)
+        db.session.commit()
+        logger.info(
+            f'Category deleted: {slug} — {moved} questions moved to {target.slug}'
+        )
+        return jsonify({
+            'message': f'Deleted {slug}; {moved} questions moved to {target.name}',
+            'moved_questions': moved,
+        }), 200
+
     db.session.delete(cat)
     db.session.commit()
-    logger.info(f'Category deleted: {slug}')
-    return jsonify({'message': f'Deleted {slug}'})
+    logger.info(
+        f'Category deleted: {slug} ({affected} questions left without category)'
+    )
+    return jsonify({
+        'message': f'Deleted {slug}',
+        'orphaned_questions': affected,
+    })
 
 
 # ============================================

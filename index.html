@@ -696,6 +696,31 @@
     </div>
   </div>
 
+  <!-- Delete Category Modal -->
+  <div id="delete-category-modal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>🗑️ Удаление категории</h3>
+        <button class="modal-close" onclick="closeDeleteCategoryModal()">✕</button>
+      </div>
+      <p id="delete-cat-text" style="margin:8px 0 16px;color:var(--tg-theme-hint-color);"></p>
+      <div class="form-group">
+        <label>Куда переместить вопросы</label>
+        <select id="delete-cat-target" class="input-field"></select>
+      </div>
+      <div class="form-group">
+        <label>Название новой категории</label>
+        <input type="text" id="delete-cat-new-name" class="input-field" placeholder="Например: Архив вопросов">
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px;">
+        <button class="btn btn-primary" id="delete-cat-move-existing" onclick="confirmDeleteCategory('move')">📦 Переместить в выбранную</button>
+        <button class="btn btn-primary" onclick="confirmDeleteCategory('move-new')">🆕 Создать новую и переместить туда</button>
+        <button class="btn btn-danger" onclick="confirmDeleteCategory('delete')">🗑️ Удалить категорию и все вопросы</button>
+        <button class="btn btn-secondary" onclick="closeDeleteCategoryModal()">Отмена</button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

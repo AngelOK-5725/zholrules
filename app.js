@@ -2189,12 +2189,87 @@ async function saveCategory() {
 }
 
 async function deleteCategory(id) {
-  if (!confirm('Удалить эту категорию? Вопросы в ней останутся, но останутся без категории.')) return;
+  const cat = adminCategoriesCache.find(c => c.id === id);
+  if (!cat) return;
+
+  // No questions → no choices needed, just confirm and delete
+  if (!cat.count) {
+    if (!confirm(`Удалить категорию «${cat.name}»?`)) return;
+    try {
+      await apiDelete(`/api/categories/${id}`);
+      await refreshCategories();
+      alert('✅ Категория удалена');
+    } catch (e) {
+      alert(`Ошибка: ${e.message}`);
+    }
+    return;
+  }
+
+  // Category has questions → ask what to do with them
+  const others = adminCategoriesCache.filter(c => c.id !== id);
+  const textEl = document.getElementById('delete-cat-text');
+  const targetSel = document.getElementById('delete-cat-target');
+  const newNameInput = document.getElementById('delete-cat-new-name');
+  const moveExistingBtn = document.getElementById('delete-cat-move-existing');
+
+  textEl.textContent =
+    `В категории «${cat.name}» — ${cat.count} вопрос(ов). ` +
+    'Что с ними сделать?';
+  targetSel.innerHTML = others.length
+    ? others.map(c =>
+        `<option value="${c.id}">${escapeHtml(c.icon || '')} ${escapeHtml(c.name)} (${c.count || 0})</option>`
+      ).join('')
+    : '<option value="">— нет других категорий —</option>';
+  moveExistingBtn.style.display = others.length ? '' : 'none';
+  newNameInput.value = '';
+
+  window._deleteCategoryContext = { id, count: cat.count, name: cat.name };
+  document.getElementById('delete-category-modal').style.display = 'flex';
+}
+
+function closeDeleteCategoryModal() {
+  document.getElementById('delete-category-modal').style.display = 'none';
+  window._deleteCategoryContext = null;
+}
+
+async function confirmDeleteCategory(mode) {
+  const ctx = window._deleteCategoryContext;
+  if (!ctx) return;
 
   try {
-    await apiDelete(`/api/categories/${id}`);
-    await refreshCategories();
-    alert('✅ Категория удалена');
+    if (mode === 'move') {
+      const target = document.getElementById('delete-cat-target').value;
+      if (!target) return;
+      const res = await apiDelete(
+        `/api/categories/${ctx.id}?mode=move&target=${encodeURIComponent(target)}`
+      );
+      await refreshCategories();
+      closeDeleteCategoryModal();
+      alert(`✅ Категория удалена. ${res.moved_questions} вопрос(ов) перемещено.`);
+    } else if (mode === 'move-new') {
+      const name = document.getElementById('delete-cat-new-name').value.trim();
+      if (!name) {
+        alert('Введите название новой категории');
+        return;
+      }
+      const created = await apiPost('/api/categories', { name });
+      const res = await apiDelete(
+        `/api/categories/${ctx.id}?mode=move&target=${created.id}`
+      );
+      await refreshCategories();
+      closeDeleteCategoryModal();
+      alert(`✅ Категория удалена. ${res.moved_questions} вопрос(ов) перемещено в «${name}».`);
+    } else if (mode === 'delete') {
+      if (!confirm(
+        `Удалить категорию «${ctx.name}» и все ${ctx.count} вопрос(ов)?\n\nЭто действие необратимо!`
+      )) return;
+      const res = await apiDelete(`/api/categories/${ctx.id}?mode=delete`);
+      await loadQuestions();
+      await refreshCategories();
+      renderAdminQuestionsList();
+      closeDeleteCategoryModal();
+      alert(`✅ Категория удалена вместе с ${res.deleted_questions} вопрос(ами).`);
+    }
   } catch (e) {
     alert(`Ошибка: ${e.message}`);
   }
