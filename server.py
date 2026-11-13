@@ -3,6 +3,8 @@ ZholRules — Flask Backend Server
 Telegram Mini App для ПДД Казахстана
 """
 
+import io
+import mimetypes
 import os
 import json
 import uuid
@@ -10,9 +12,10 @@ import hashlib
 import hmac
 import time
 from functools import wraps
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_file, send_from_directory
+from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from flask_socketio import SocketIO, emit, join_room, leave_room
@@ -55,6 +58,9 @@ if CLOUDINARY_CONFIGURED:
 # APP INIT
 # ============================================
 app = Flask(__name__, static_folder='.', static_url_path='')
+# Render terminates TLS in front of gunicorn. Without ProxyFix request.url_root
+# is http:// and Telegram's HTTPS WebView blocks uploaded media as mixed content.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///zholrules.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -95,7 +101,7 @@ def sync_id_sequences():
     tables = (
         'questions', 'users', 'categories', 'settings', 'subscriptions',
         'user_stats', 'user_category_stats', 'user_errors',
-        'daily_activity', 'competitions',
+        'daily_activity', 'competitions', 'media',
     )
     with db.engine.connect() as conn:
         for table in tables:
@@ -119,6 +125,34 @@ def sync_id_sequences():
                 logger.debug(f'Sequence synced for {table}: next id = {max_id + 1}')
             except Exception as e:
                 logger.warning(f'Sequence sync skipped for {table}: {e}')
+
+
+def ensure_bird_columns():
+    """Add Flippy Bird limit columns to an existing user_stats table."""
+    is_sqlite = db.engine.dialect.name == 'sqlite'
+    columns = (
+        ('bird_games_date', "ALTER TABLE user_stats ADD COLUMN bird_games_date VARCHAR(10) DEFAULT ''"),
+        ('bird_games_played', 'ALTER TABLE user_stats ADD COLUMN bird_games_played INTEGER DEFAULT 0'),
+        ('bird_bonus_games', 'ALTER TABLE user_stats ADD COLUMN bird_bonus_games INTEGER DEFAULT 0'),
+        ('bird_rewards_date', "ALTER TABLE user_stats ADD COLUMN bird_rewards_date VARCHAR(10) DEFAULT ''"),
+        ('bird_rewards_today', 'ALTER TABLE user_stats ADD COLUMN bird_rewards_today INTEGER DEFAULT 0'),
+    )
+
+    with db.engine.connect() as conn:
+        if is_sqlite:
+            existing = {row[1] for row in conn.execute(db.text('PRAGMA table_info(user_stats)'))}
+        else:
+            existing = set()
+
+        for col, ddl in columns:
+            if is_sqlite and col in existing:
+                continue
+            statement = ddl if is_sqlite else ddl.replace('ADD COLUMN', 'ADD COLUMN IF NOT EXISTS')
+            try:
+                conn.execute(db.text(statement))
+                conn.commit()
+            except Exception as e:
+                logger.warning(f'Bird column migration skipped ({col}): {e}')
 
 
 def ensure_question_columns():
@@ -199,6 +233,52 @@ class User(db.Model):
         }
 
 
+# Streak day boundary: Kazakhstan time (UTC+5).
+# "Не прошёл тестирование до 00:00" means 00:00 local Kazakhstan time.
+STREAK_TZ = timezone(timedelta(hours=5))
+
+
+def streak_today():
+    return datetime.now(STREAK_TZ).date()
+
+
+def effective_streak(stats, today=None):
+    """Displayed streak: it only appears after 2 consecutive testing days."""
+    if not stats or not stats.last_active_date:
+        return 0
+    today = today or streak_today()
+    try:
+        last = date.fromisoformat(stats.last_active_date)
+    except (TypeError, ValueError):
+        return 0
+    # A missed day (nothing before 00:00) breaks the series.
+    if last < today - timedelta(days=1):
+        return 0
+    return stats.streak if (stats.streak or 0) >= 2 else 0
+
+
+def touch_streak(stats, today=None):
+    """Mark a completed test day (any mode) and grow/reset the series."""
+    today = today or streak_today()
+    today_str = today.isoformat()
+
+    if stats.last_active_date == today_str:
+        if not stats.streak:
+            stats.streak = 1
+        return
+
+    if stats.last_active_date:
+        try:
+            last = date.fromisoformat(stats.last_active_date)
+            stats.streak = (stats.streak or 0) + 1 if last == today - timedelta(days=1) else 1
+        except (TypeError, ValueError):
+            stats.streak = 1
+    else:
+        stats.streak = 1
+
+    stats.last_active_date = today_str
+
+
 class UserStats(db.Model):
     __tablename__ = 'user_stats'
 
@@ -211,16 +291,24 @@ class UserStats(db.Model):
     stars = db.Column(db.Integer, default=0)
     lives = db.Column(db.Integer, default=3)
     game_high_score = db.Column(db.Integer, default=0)
+    # Flippy Bird daily limits (free plan: N games/day, ads grant extra games)
+    bird_games_date = db.Column(db.String(10), default='')
+    bird_games_played = db.Column(db.Integer, default=0)
+    bird_bonus_games = db.Column(db.Integer, default=0)
+    bird_rewards_date = db.Column(db.String(10), default='')
+    bird_rewards_today = db.Column(db.Integer, default=0)
 
     def to_dict(self):
         return {
             'total_answered': self.total_answered,
             'total_correct': self.total_correct,
             'accuracy': round((self.total_correct / self.total_answered * 100), 1) if self.total_answered > 0 else 0,
-            'streak': self.streak,
+            'streak': effective_streak(self),
             'stars': self.stars,
             'lives': self.lives,
             'game_high_score': self.game_high_score,
+            'bird_games_played': self.bird_games_played,
+            'bird_bonus_games': self.bird_bonus_games,
         }
 
 
@@ -357,6 +445,33 @@ class Category(db.Model):
             'icon': self.icon,
             'color': self.color,
             'sort_order': self.sort_order,
+        }
+
+
+class Media(db.Model):
+    """Uploaded image/video stored directly in the database (Neon PostgreSQL).
+
+    Local disk on Render is ephemeral, so files saved there disappear after a
+    redeploy/restart. Keeping the bytes in Postgres makes uploads durable and
+    they are served back through /api/media/<id>.
+    """
+    __tablename__ = 'media'
+
+    id = db.Column(db.Integer, primary_key=True)
+    filename = db.Column(db.String(255), default='')
+    mimetype = db.Column(db.String(100), default='application/octet-stream')
+    size = db.Column(db.Integer, default=0)
+    data = db.Column(db.LargeBinary, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'filename': self.filename,
+            'mimetype': self.mimetype,
+            'size': self.size,
+            'url': f'/api/media/{self.id}',
+            'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
 
@@ -558,28 +673,69 @@ def upload_media():
             'error': f'Недопустимый формат «{ext}». Разрешены: ' + ', '.join(sorted(ALLOWED_MEDIA_EXTENSIONS))
         }), 400
 
-    # Production: Cloudinary
-    if CLOUDINARY_CONFIGURED:
-        try:
-            result = cloudinary.uploader.upload(
-                file, resource_type='auto', folder='zholrules'
-            )
-            logger.info(f'Media uploaded to Cloudinary: {result.get("public_id")}')
-            return jsonify({
-                'url': result['secure_url'],
-                'public_id': result.get('public_id'),
-                'filename': file.filename,
-            }), 201
-        except Exception as e:
-            logger.error(f'Cloudinary upload failed: {e}')
-            return jsonify({'error': f'Ошибка загрузки в Cloudinary: {e}'}), 500
+    raw = file.read()
+    if not raw:
+        return jsonify({'error': 'Файл пуст'}), 400
 
-    # Local fallback (dev mode / no Cloudinary configured)
+    mimetype = file.mimetype or mimetypes.guess_type(file.filename)[0] or 'application/octet-stream'
+
+    # Primary storage: Neon PostgreSQL (durable across redeploys)
+    media = Media(
+        filename=(file.filename or '')[:255],
+        mimetype=mimetype[:100],
+        size=len(raw),
+        data=raw,
+    )
+    try:
+        db.session.add(media)
+        db.session.commit()
+        # Relative URL: the app is always served from the same origin, and this
+        # avoids http:// mixed-content blocks inside Telegram's HTTPS WebView.
+        url = f'/api/media/{media.id}'
+        logger.info(
+            f'Media stored in DB: id={media.id} name={media.filename} '
+            f'size={media.size} type={media.mimetype}'
+        )
+        return jsonify({
+            'id': media.id,
+            'url': url,
+            'filename': media.filename,
+            'size': media.size,
+            'storage': 'database',
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'DB media upload failed, falling back to local disk: {e}')
+
+    # Fallback: local disk (dev mode / DB unavailable)
     filename = uuid.uuid4().hex + ext
-    file.save(os.path.join(MEDIA_FOLDER, filename))
-    url = request.url_root.rstrip('/') + '/uploads/' + filename
-    logger.info(f'Media saved locally: {filename}')
-    return jsonify({'url': url, 'filename': filename}), 201
+    with open(os.path.join(MEDIA_FOLDER, filename), 'wb') as fh:
+        fh.write(raw)
+    url = f'/uploads/{filename}'
+    logger.warning(f'Media saved locally (not durable): {filename}')
+    return jsonify({
+        'url': url,
+        'filename': filename,
+        'storage': 'local',
+    }), 201
+
+
+@app.route('/api/media/<int:media_id>')
+def get_media(media_id):
+    """Serve a media file stored in the database."""
+    media = db.session.get(Media, media_id)
+    if not media:
+        return jsonify({'error': 'Медиафайл не найден'}), 404
+    response = send_file(
+        io.BytesIO(media.data),
+        mimetype=media.mimetype or 'application/octet-stream',
+        as_attachment=False,
+        download_name=media.filename or f'media-{media.id}',
+        conditional=True,
+        max_age=31536000,
+    )
+    response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+    return response
 
 
 @app.route('/uploads/<path:filename>')
@@ -868,7 +1024,7 @@ def submit_answer():
         cat_stats.correct += 1
 
     # Daily activity counter (powers cohort retention)
-    activity_day = date.today().isoformat()
+    activity_day = streak_today().isoformat()
     daily = DailyActivity.query.filter_by(user_id=user.id, activity_date=activity_day).first()
     if not daily:
         daily = DailyActivity(user_id=user.id, activity_date=activity_day, answers=0)
@@ -892,19 +1048,9 @@ def submit_answer():
                 error = UserError(user_id=user.id, question_id=question_id)
                 db.session.add(error)
 
-    # Update streak
-    today = date.today().isoformat()
-    if stats.last_active_date != today:
-        if stats.last_active_date:
-            last_date = datetime.strptime(stats.last_active_date, '%Y-%m-%d').date()
-            diff = (date.today() - last_date).days
-            if diff == 1:
-                stats.streak += 1
-            elif diff > 1:
-                stats.streak = 1
-        else:
-            stats.streak = 1
-        stats.last_active_date = today
+    # Streak: any answered question (quiz, exam, sprint, bird, competition)
+    # counts as passing a test that day.
+    touch_streak(stats)
 
     db.session.commit()
 
@@ -1034,6 +1180,170 @@ def update_game_score():
 
 
 # ============================================
+# API: FLIPPY BIRD (daily limits + rewarded ads)
+# ============================================
+def _bird_int_setting(key, default):
+    try:
+        return int(get_setting(key, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _bird_stats(user):
+    stats = user.stats
+    if not stats:
+        stats = UserStats(user_id=user.id)
+        db.session.add(stats)
+    return stats
+
+
+def _bird_reset_daily(stats):
+    """Reset per-day counters when the date changes. Returns True if changed."""
+    today = date.today().isoformat()
+    changed = False
+    if stats.bird_games_date != today:
+        stats.bird_games_date = today
+        stats.bird_games_played = 0
+        changed = True
+    if stats.bird_rewards_date != today:
+        stats.bird_rewards_date = today
+        stats.bird_rewards_today = 0
+        changed = True
+    return changed
+
+
+def _bird_payload(user, stats):
+    limit = _bird_int_setting('free_bird_games', 3)
+    ad_max = _bird_int_setting('bird_ad_reward_max', 5)
+    played = stats.bird_games_played or 0
+    bonus = stats.bird_bonus_games or 0
+    unlimited = is_pro(user) or bool(user.is_admin)
+    ost_min = _bird_int_setting('bird_obstacles_min', 4)
+    ost_max = _bird_int_setting('bird_obstacles_max', 11)
+    if ost_max < ost_min:
+        ost_max = ost_min
+    return {
+        'limit': limit,
+        'played_today': played,
+        'games_left': max(0, limit - played),
+        'bonus_games': bonus,
+        'total_games_left': (999 if unlimited else max(0, limit - played) + bonus),
+        'is_pro': is_pro(user),
+        'unlimited': unlimited,
+        'ad_rewards_left': max(0, ad_max - (stats.bird_rewards_today or 0)),
+        'ad_reward_max': ad_max,
+        'ad_duration': _bird_int_setting('bird_ad_duration', 5),
+        'obstacles_min': ost_min,
+        'obstacles_max': ost_max,
+        'question_seconds': _bird_int_setting('bird_question_seconds', 15),
+    }
+
+
+def _bird_current_user():
+    return User.query.filter_by(tg_id=request.tg_user['id']).first()
+
+
+@app.route('/api/bird/status', methods=['GET'])
+@require_auth
+def bird_status():
+    """How many Flippy Bird games the user has left today."""
+    user = _bird_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    stats = _bird_stats(user)
+    _bird_reset_daily(stats)
+    db.session.commit()
+    return jsonify(_bird_payload(user, stats))
+
+
+@app.route('/api/bird/start', methods=['POST'])
+@require_auth
+def bird_start():
+    """Consume one game (free daily quota first, then ad-rewarded bonus)."""
+    user = _bird_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    stats = _bird_stats(user)
+    _bird_reset_daily(stats)
+
+    payload = _bird_payload(user, stats)
+    if not payload['unlimited']:
+        if (stats.bird_games_played or 0) < payload['limit']:
+            stats.bird_games_played = (stats.bird_games_played or 0) + 1
+        elif (stats.bird_bonus_games or 0) > 0:
+            stats.bird_bonus_games -= 1
+        else:
+            db.session.commit()
+            payload = _bird_payload(user, stats)
+            payload['allowed'] = False
+            payload['reason'] = 'daily_limit'
+            return jsonify(payload), 402
+
+    db.session.commit()
+    payload = _bird_payload(user, stats)
+    payload['allowed'] = True
+    return jsonify(payload)
+
+
+@app.route('/api/bird/reward', methods=['POST'])
+@require_auth
+def bird_reward():
+    """Grant +1 game after a rewarded ad.
+
+    NOTE: this endpoint trusts the client until a real ad network with
+    server-side verification (SSV) is connected — see the ad placeholder in
+    the frontend. The daily cap keeps abuse bounded.
+    """
+    user = _bird_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    stats = _bird_stats(user)
+    _bird_reset_daily(stats)
+
+    ad_max = _bird_int_setting('bird_ad_reward_max', 5)
+    if (stats.bird_rewards_today or 0) >= ad_max:
+        db.session.commit()
+        payload = _bird_payload(user, stats)
+        payload['allowed'] = False
+        payload['reason'] = 'reward_limit'
+        return jsonify(payload), 429
+
+    stats.bird_rewards_today = (stats.bird_rewards_today or 0) + 1
+    stats.bird_bonus_games = (stats.bird_bonus_games or 0) + 1
+    db.session.commit()
+    logger.info(f'Bird ad reward: user={user.tg_id} bonus={stats.bird_bonus_games}')
+    payload = _bird_payload(user, stats)
+    payload['allowed'] = True
+    return jsonify(payload)
+
+
+@app.route('/api/bird/finish', methods=['POST'])
+@require_auth
+def bird_finish():
+    """Save a finished Flippy Bird run (best score only)."""
+    user = _bird_current_user()
+    if not user or not user.stats:
+        return jsonify({'error': 'User not found'}), 404
+
+    data = request.get_json(silent=True) or {}
+    try:
+        score = max(0, int(data.get('score', 0) or 0))
+    except (TypeError, ValueError):
+        score = 0
+
+    stats = user.stats
+    is_record = score > (stats.game_high_score or 0)
+    if is_record:
+        stats.game_high_score = score
+        db.session.commit()
+
+    return jsonify({
+        'high_score': stats.game_high_score or 0,
+        'is_new_record': is_record,
+    })
+
+
+# ============================================
 # API: CATEGORIES
 # ============================================
 @app.route('/api/categories', methods=['GET'])
@@ -1082,14 +1392,41 @@ def create_category():
 @require_auth
 @require_admin
 def update_category(cat_id):
-    """Update a category (admin only)."""
+    """Update a category (owner only).
+
+    Renaming a category never touches its questions: only the category's own
+    name (and, if the slug/identifier changes, the questions' category
+    reference is migrated to the new slug so the whole content stays inside
+    the category).
+    """
     cat = Category.query.get_or_404(cat_id)
-    data = request.get_json()
+    data = request.get_json() or {}
+    old_slug = cat.slug
+    questions_moved = 0
+
+    if 'slug' in data:
+        new_slug = str(data.get('slug') or '').strip()
+        if not new_slug:
+            return jsonify({'error': 'Slug не может быть пустым'}), 400
+        if new_slug != old_slug:
+            duplicate = Category.query.filter(
+                Category.slug == new_slug, Category.id != cat.id
+            ).first()
+            if duplicate:
+                return jsonify({
+                    'error': f'Категория «{new_slug}» уже существует'
+                }), 409
+            # Keep every question inside this category after the rename.
+            questions_moved = Question.query.filter_by(category=old_slug).update(
+                {Question.category: new_slug}, synchronize_session=False
+            )
+            cat.slug = new_slug
 
     if 'name' in data:
-        cat.name = data['name']
-    if 'slug' in data:
-        cat.slug = data['slug']
+        new_name = str(data.get('name') or '').strip()
+        if not new_name:
+            return jsonify({'error': 'Название категории не может быть пустым'}), 400
+        cat.name = new_name
     if 'icon' in data:
         cat.icon = data['icon']
     if 'color' in data:
@@ -1098,8 +1435,16 @@ def update_category(cat_id):
         cat.sort_order = data['sort_order']
 
     db.session.commit()
-    logger.info(f'Category updated: {cat.slug}')
-    return jsonify(cat.to_dict())
+
+    questions_kept = Question.query.filter_by(category=cat.slug).count()
+    logger.info(
+        f'Category updated: {old_slug} -> {cat.slug} ({cat.name}); '
+        f'{questions_kept} questions kept, {questions_moved} re-linked'
+    )
+    result = cat.to_dict()
+    result['questions_kept'] = questions_kept
+    result['questions_moved'] = questions_moved
+    return jsonify(result)
 
 
 @app.route('/api/categories/<int:cat_id>', methods=['DELETE'])
@@ -1178,6 +1523,12 @@ DEFAULT_SETTINGS = {
     'exam_questions': {'value': '40', 'description': 'Количество вопросов в экзамене'},
     'exam_time_minutes': {'value': '40', 'description': 'Время экзамена в минутах'},
     'mini_game_duration': {'value': '60', 'description': 'Длительность мини-игры в секундах'},
+    'free_bird_games': {'value': '3', 'description': 'Flippy Bird: бесплатных игр в день'},
+    'bird_obstacles_min': {'value': '4', 'description': 'Flippy Bird: минимум препятствий до вопроса'},
+    'bird_obstacles_max': {'value': '11', 'description': 'Flippy Bird: максимум препятствий до вопроса'},
+    'bird_question_seconds': {'value': '15', 'description': 'Flippy Bird: секунд на ответ'},
+    'bird_ad_reward_max': {'value': '5', 'description': 'Flippy Bird: максимум бонусных игр за рекламу в день'},
+    'bird_ad_duration': {'value': '5', 'description': 'Flippy Bird: длительность rewarded-рекламы (сек)'},
     'free_plan_enabled': {'value': 'true', 'description': 'Бесплатный план доступен'},
     'pro_plan_enabled': {'value': 'true', 'description': 'Pro план доступен для покупки'},
     'lives_stars_price': {'value': '5', 'description': 'Цена +3 жизней в Telegram Stars'},
@@ -1238,6 +1589,8 @@ def get_public_settings():
         'exam_questions', 'exam_time_minutes', 'mini_game_duration',
         'daily_questions_target', 'max_daily_lives', 'free_error_limit',
         'pro_stars_price', 'lives_stars_price',
+        'free_bird_games', 'bird_obstacles_min', 'bird_obstacles_max',
+        'bird_question_seconds', 'bird_ad_reward_max', 'bird_ad_duration',
     ]
     return jsonify({
         k: get_setting(k, DEFAULT_SETTINGS.get(k, {}).get('value', ''))
@@ -1697,6 +2050,7 @@ def init_db():
     with app.app_context():
         db.create_all()
         ensure_question_columns()
+        ensure_bird_columns()
         sync_id_sequences()
 
         # Seed default categories if empty
@@ -1885,6 +2239,7 @@ def handle_competition_answer(data):
         user.stats.total_answered += 1
         if is_correct:
             user.stats.total_correct += 1
+        touch_streak(user.stats)
         db.session.commit()
 
     # Update score
@@ -2142,7 +2497,7 @@ def get_analytics():
         'total_answered': s.total_answered,
         'total_correct': s.total_correct,
         'accuracy': round((s.total_correct / s.total_answered * 100), 1) if s.total_answered > 0 else 0,
-        'streak': s.streak,
+        'streak': effective_streak(s),
     } for u, s in top_users]
 
     return jsonify({

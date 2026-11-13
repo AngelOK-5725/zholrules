@@ -186,35 +186,90 @@
 
     </div>
 
-    <!-- Tab: Mini-Game -->
+    <!-- Tab: Game -->
     <div id="tab-game" class="tab-content">
-      <div class="game-container">
-        <div class="game-header">
-          <div class="game-timer" id="game-timer">⏱️ 60</div>
-          <div class="game-score">🏆 <span id="game-score">0</span></div>
-          <div class="game-combo" id="game-combo" style="display:none;">x1</div>
-        </div>
-        <div class="game-area" id="game-area">
-          <div class="game-placeholder">
-            <div class="game-placeholder-icon">🏎️</div>
-            <h3>Дорожный Спринт</h3>
-            <p>60 секунд быстрых вопросов. Зарабатывай комбо за правильные ответы!</p>
-            <button class="btn btn-primary" onclick="startMiniGame()">Старт!</button>
+      <div class="game-mode-switch">
+        <button class="game-mode-btn active" id="game-mode-bird-btn" onclick="setGameMode('bird')">
+          <span class="game-mode-icon">🐤</span><span>Flippy Bird</span>
+        </button>
+        <button class="game-mode-btn" id="game-mode-sprint-btn" onclick="setGameMode('sprint')">
+          <span class="game-mode-icon">🏎️</span><span>Спринт 60 сек</span>
+        </button>
+      </div>
+
+      <!-- Flippy Bird: fly through obstacles, then answer a DB question -->
+      <div id="bird-mode">
+        <div class="bird-hud">
+          <div class="bird-hud-lives" id="bird-lives" title="Жизни">❤️❤️❤️</div>
+          <div class="bird-hud-progress">
+            <span id="bird-progress-text">0 / 6</span>
+            <div class="bird-progress-bar"><div class="bird-progress-fill" id="bird-progress-fill"></div></div>
           </div>
-          <div class="game-question" id="game-question" style="display:none;">
-            <div class="game-sign" id="game-sign-text"></div>
-            <div class="game-options" id="game-options">
-              <!-- Filled by JS -->
+          <div class="bird-hud-score">🏆 <span id="bird-score">0</span></div>
+        </div>
+
+        <div class="bird-stage" id="bird-stage">
+          <canvas id="bird-canvas"></canvas>
+
+          <div class="bird-overlay" id="bird-start-overlay">
+            <div class="bird-overlay-emoji">🐤</div>
+            <h3>Flippy Bird</h3>
+            <p>Пролети от 4 до 11 препятствий, затем ответь на вопрос из базы. 3 жизни: столкновение, неверный ответ или истёкшее время забирают одну.</p>
+            <div class="bird-quota" id="bird-quota">Проверяем доступ…</div>
+            <button class="btn btn-primary btn-large" id="bird-start-btn" onclick="startBirdGame()">▶ Играть</button>
+            <button class="bird-ad-btn" id="bird-ad-btn" style="display:none;" onclick="watchBirdRewardAd()">🎬 Смотреть рекламу +1 игра</button>
+          </div>
+
+          <div class="bird-overlay" id="bird-over-overlay" style="display:none;">
+            <div class="bird-overlay-emoji">🏁</div>
+            <h3>Игра окончена</h3>
+            <div class="bird-result-rows">
+              <div><span>Препятствий</span><b id="bird-final-pipes">0</b></div>
+              <div><span>Верных ответов</span><b id="bird-final-correct">0</b></div>
+              <div><span>Очки</span><b id="bird-final-score">0</b></div>
+              <div><span>Рекорд</span><b id="bird-final-best">0</b></div>
+            </div>
+            <div class="bird-over-actions">
+              <button class="btn btn-primary" id="bird-again-btn" onclick="startBirdGame()">Играть снова</button>
+              <button class="btn btn-secondary" onclick="closeBirdGame()">Выйти</button>
+            </div>
+            <button class="bird-ad-btn" id="bird-over-ad-btn" style="display:none;" onclick="watchBirdRewardAd()">🎬 Реклама +1 игра</button>
+          </div>
+        </div>
+
+        <p class="bird-tip">Тапни по полю или нажми <b>пробел</b>, чтобы взмахнуть крыльями.</p>
+      </div>
+
+      <!-- Sprint (quiz mini-game) -->
+      <div id="sprint-mode" style="display:none;">
+        <div class="game-container">
+          <div class="game-header">
+            <div class="game-timer" id="game-timer">⏱️ 60</div>
+            <div class="game-score">🏆 <span id="game-score">0</span></div>
+            <div class="game-combo" id="game-combo" style="display:none;">x1</div>
+          </div>
+          <div class="game-area" id="game-area">
+            <div class="game-placeholder">
+              <div class="game-placeholder-icon">🏎️</div>
+              <h3>Дорожный Спринт</h3>
+              <p>60 секунд быстрых вопросов. Зарабатывай комбо за правильные ответы!</p>
+              <button class="btn btn-primary" onclick="startMiniGame()">Старт!</button>
+            </div>
+            <div class="game-question" id="game-question" style="display:none;">
+              <div class="game-sign" id="game-sign-text"></div>
+              <div class="game-options" id="game-options">
+                <!-- Filled by JS -->
+              </div>
             </div>
           </div>
-        </div>
-        <div class="game-result" id="game-result" style="display:none;">
-          <div class="game-result-emoji">🏁</div>
-          <h2>Гонка завершена!</h2>
-          <p>Очки: <span id="final-score">0</span></p>
-          <p>Верных ответов: <span id="correct-answers">0</span> / <span id="total-answers">0</span></p>
-          <p>Максимальное комбо: <span id="max-combo">0</span>x</p>
-          <button class="btn btn-primary" onclick="resetMiniGame()">Играть снова</button>
+          <div class="game-result" id="game-result" style="display:none;">
+            <div class="game-result-emoji">🏁</div>
+            <h2>Гонка завершена!</h2>
+            <p>Очки: <span id="final-score">0</span></p>
+            <p>Верных ответов: <span id="correct-answers">0</span> / <span id="total-answers">0</span></p>
+            <p>Максимальное комбо: <span id="max-combo">0</span>x</p>
+            <button class="btn btn-primary" onclick="resetMiniGame()">Играть снова</button>
+          </div>
         </div>
       </div>
     </div>
@@ -310,19 +365,37 @@
 
     <!-- Tab: Admin (visible only to owner) -->
     <div id="tab-admin" class="tab-content">
-      <div class="admin-header">
-        <h2>⚙️ Панель управления</h2>
-        <p>Добавляйте и редактируйте вопросы</p>
+      <div class="admin-hero admin-hero--compact">
+        <div class="admin-hero-icon">⚙️</div>
+        <div class="admin-hero-text">
+          <h2>Управление</h2>
+          <p>Вопросы, категории, пользователи и экономика</p>
+        </div>
+        <span class="admin-owner-badge">👑 Владелец</span>
       </div>
 
       <div class="admin-tabs">
-        <button class="admin-tab active" id="admin-tab-dashboard" onclick="switchAdminTab('dashboard')">📊 Дашборд</button>
-        <button class="admin-tab" id="admin-tab-settings" onclick="switchAdminTab('settings')">⚙️ Настройки</button>
-        <button class="admin-tab" id="admin-tab-users" onclick="switchAdminTab('users')">👥 Юзеры</button>
-        <button class="admin-tab" id="admin-tab-create" onclick="switchAdminTab('create')">➕ Вопрос</button>
-        <button class="admin-tab" id="admin-tab-categories" onclick="switchAdminTab('categories')">🗂️ Категории</button>
-        <button class="admin-tab" id="admin-tab-list" onclick="switchAdminTab('list')">📋 Список</button>
-        <button class="admin-tab" id="admin-tab-export" onclick="switchAdminTab('export')">📥 Экспорт</button>
+        <button class="admin-tab active" id="admin-tab-dashboard" onclick="switchAdminTab('dashboard')">
+          <span class="admin-tab-icon">📊</span><span>Дашборд</span>
+        </button>
+        <button class="admin-tab" id="admin-tab-settings" onclick="switchAdminTab('settings')">
+          <span class="admin-tab-icon">⚙️</span><span>Настройки</span>
+        </button>
+        <button class="admin-tab" id="admin-tab-users" onclick="switchAdminTab('users')">
+          <span class="admin-tab-icon">👥</span><span>Юзеры</span>
+        </button>
+        <button class="admin-tab" id="admin-tab-create" onclick="switchAdminTab('create')">
+          <span class="admin-tab-icon">➕</span><span>Вопрос</span>
+        </button>
+        <button class="admin-tab" id="admin-tab-categories" onclick="switchAdminTab('categories')">
+          <span class="admin-tab-icon">🗂️</span><span>Категории</span>
+        </button>
+        <button class="admin-tab" id="admin-tab-list" onclick="switchAdminTab('list')">
+          <span class="admin-tab-icon">📋</span><span>Список</span>
+        </button>
+        <button class="admin-tab" id="admin-tab-export" onclick="switchAdminTab('export')">
+          <span class="admin-tab-icon">📥</span><span>Экспорт</span>
+        </button>
       </div>
 
       <!-- Dashboard Panel -->
@@ -367,6 +440,14 @@
 
       <!-- Create Question Form -->
       <div id="admin-create" class="admin-panel">
+        <div class="admin-editor-head">
+          <div>
+            <h3 id="admin-editor-title">Новый вопрос</h3>
+            <p id="admin-editor-subtitle">Текст → варианты → ✓ правильный → сохранить</p>
+          </div>
+          <span class="admin-draft-badge" id="admin-draft-badge" style="display:none;">черновик</span>
+        </div>
+        <div class="admin-card admin-editor">
         <div class="form-group">
           <label>Категория</label>
           <select id="admin-category" class="input-field">
@@ -400,7 +481,10 @@
           <input type="text" id="admin-media-url-youtube" class="input-field" placeholder="https://youtube.com/watch?v=..." oninput="previewMediaFromUrl(this.value)">
         </div>
         <div class="form-group">
-          <label>Варианты ответов (минимум 2)</label>
+          <div class="admin-label-row">
+            <label>Варианты ответов</label>
+            <button type="button" class="admin-link-btn" onclick="openBulkOptions()">📋 Вставить списком</button>
+          </div>
           <div id="admin-options-list">
             <div class="option-block">
               <div class="option-row">
@@ -427,7 +511,8 @@
               </div>
             </div>
           </div>
-          <button class="btn btn-secondary btn-small" onclick="addAdminOption()">+ Добавить вариант</button>
+          <button type="button" class="btn btn-secondary btn-small admin-add-option" onclick="addAdminOption()">+ Добавить вариант</button>
+          <div class="admin-hint">Enter — новый вариант. Нажмите ✓ у правильного ответа.</div>
         </div>
         <div class="form-group">
           <label>Тип выбора</label>
@@ -448,61 +533,99 @@
             <option value="hard">Сложный</option>
           </select>
         </div>
-        <button class="btn btn-primary" id="admin-save-btn" onclick="saveQuestion()">💾 Сохранить вопрос</button>
+        <div class="admin-save-bar">
+          <div class="admin-validation" id="admin-validation">0 вариантов · ответ не выбран</div>
+          <div class="admin-save-actions">
+            <button class="btn btn-secondary" id="admin-save-more-btn" onclick="saveQuestion({ keepOpen: true })">Сохранить и ещё</button>
+            <button class="btn btn-primary" id="admin-save-btn" onclick="saveQuestion()">💾 Сохранить</button>
+          </div>
+        </div>
+        </div>
       </div>
 
       <!-- Question List -->
       <div id="admin-list" class="admin-panel">
-        <div class="form-group">
-          <input type="text" id="admin-question-search" class="input-field" placeholder="🔍 Поиск по тексту или категории..." oninput="onAdminQuestionSearch(this.value)">
+        <div class="admin-settings-header">
+          <h3>📋 Список вопросов</h3>
+          <p>Найдите нужный вопрос и отредактируйте его в один клик</p>
         </div>
-        <div id="admin-questions-list">
-          <!-- Filled by JS -->
+        <div class="admin-card admin-list-card">
+          <div class="admin-list-toolbar">
+            <input type="text" id="admin-question-search" class="input-field" placeholder="🔍 Поиск по тексту..." oninput="onAdminQuestionSearch(this.value)">
+            <select id="admin-category-filter" class="input-field" onchange="onAdminCategoryFilter(this.value)">
+              <option value="">Все категории</option>
+            </select>
+          </div>
+          <div id="admin-category-chips" class="admin-chips"></div>
+          <div id="admin-questions-list">
+            <!-- Filled by JS -->
+          </div>
+          <div id="admin-questions-pager" class="admin-pager"></div>
         </div>
-        <div id="admin-questions-pager" class="admin-pager"></div>
       </div>
 
       <!-- Categories Management -->
       <div id="admin-categories" class="admin-panel">
-        <h3>Управление категориями</h3>
+        <div class="admin-settings-header">
+          <h3>🗂️ Категории</h3>
+          <p>Переименование не затрагивает вопросы — всё содержимое остаётся на месте</p>
+        </div>
 
-        <div class="form-group">
-          <label>Название</label>
-          <input type="text" id="cat-name" class="input-field" placeholder="Например: Знаки приоритета">
-        </div>
-        <div class="form-group">
-          <label>Slug (идентификатор)</label>
-          <input type="text" id="cat-slug" class="input-field" placeholder="znaki-prioriteta (авто из названия)">
-        </div>
-        <div class="form-group">
-          <label>Иконка (эмодзи)</label>
-          <input type="text" id="cat-icon" class="input-field" placeholder="📚" maxlength="4">
-        </div>
-        <div class="form-group">
-          <label>Цвет</label>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <input type="color" id="cat-color" value="#FFB300" style="width:48px;height:40px;border:none;cursor:pointer;">
-            <input type="text" id="cat-color-hex" class="input-field" value="#FFB300" style="flex:1;" oninput="document.getElementById('cat-color').value=this.value">
+        <div class="admin-card">
+          <div class="admin-card-title" id="cat-form-title">Новая категория</div>
+          <div class="form-group">
+            <label>Название</label>
+            <input type="text" id="cat-name" class="input-field" placeholder="Например: Знаки приоритета">
+          </div>
+          <div class="form-group">
+            <label>Slug (идентификатор)</label>
+            <input type="text" id="cat-slug" class="input-field" placeholder="znaki-prioriteta (авто из названия)">
+            <div class="admin-hint">💡 Меняете slug — вопросы автоматически останутся в категории</div>
+          </div>
+          <div class="admin-form-row">
+            <div class="form-group" style="flex:0 0 110px;">
+              <label>Иконка</label>
+              <input type="text" id="cat-icon" class="input-field" placeholder="📚" maxlength="4">
+            </div>
+            <div class="form-group" style="flex:1;">
+              <label>Цвет</label>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <input type="color" id="cat-color" value="#FFB300" style="width:44px;height:40px;border:none;cursor:pointer;background:none;">
+                <input type="text" id="cat-color-hex" class="input-field" value="#FFB300" style="flex:1;" oninput="document.getElementById('cat-color').value=this.value">
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-primary" id="cat-save-btn" onclick="saveCategory()" style="flex:1;">➕ Добавить категорию</button>
+            <button class="btn btn-secondary btn-small" id="cat-cancel-btn" onclick="resetCategoryForm()" style="display:none;">Отмена</button>
           </div>
         </div>
-        <div style="display:flex;gap:8px;">
-          <button class="btn btn-primary" id="cat-save-btn" onclick="saveCategory()" style="flex:1;">➕ Добавить категорию</button>
-          <button class="btn btn-secondary btn-small" id="cat-cancel-btn" onclick="resetCategoryForm()" style="display:none;">Отмена</button>
-        </div>
 
-        <div id="categories-admin-list" style="margin-top:24px;">
-          <!-- Filled by JS -->
+        <div class="admin-card" style="margin-top:16px;">
+          <div class="admin-card-title">
+            Все категории
+            <span class="admin-count-badge" id="categories-count-badge">0</span>
+          </div>
+          <div id="categories-admin-list">
+            <!-- Filled by JS -->
+          </div>
         </div>
       </div>
 
       <!-- Export JSON -->
       <div id="admin-export" class="admin-panel">
-        <div class="export-info">
-          <p>Экспортите данные вопросов в формате JSON для резервного копирования или переноса на другой сервер.</p>
+        <div class="admin-settings-header">
+          <h3>📥 Экспорт</h3>
+          <p>Сохраните вопросы в JSON — для резервной копии или переноса</p>
         </div>
-        <button class="btn btn-primary" onclick="exportJSON()">📥 Скачать JSON</button>
-        <div class="export-preview">
-          <textarea id="export-preview" class="input-field code-block" readonly></textarea>
+        <div class="admin-card">
+          <div class="export-info">
+            <p>Экспортируйте данные вопросов в формате JSON для резервного копирования или переноса на другой сервер.</p>
+          </div>
+          <button class="btn btn-primary" onclick="exportJSON()">📥 Скачать JSON</button>
+          <div class="export-preview">
+            <textarea id="export-preview" class="input-field code-block" readonly></textarea>
+          </div>
         </div>
       </div>
     </div>
@@ -516,6 +639,10 @@
       <button class="nav-btn" data-tab="study" onclick="switchTab('study')">
         <span class="nav-icon">📚</span>
         <span class="nav-label">Учёба</span>
+      </button>
+      <button class="nav-btn" data-tab="game" onclick="switchTab('game')">
+        <span class="nav-icon">🐤</span>
+        <span class="nav-label">Игра</span>
       </button>
       <button class="nav-btn" data-tab="profile" onclick="switchTab('profile')">
         <span class="nav-icon">👤</span>
@@ -720,6 +847,78 @@
       </div>
     </div>
   </div>
+
+  <!-- Danger confirmation modal (used for irreversible deletions) -->
+  <div id="danger-confirm-modal" class="modal" style="display:none;">
+    <div class="modal-content danger-confirm">
+      <div class="danger-confirm-icon">⚠️</div>
+      <h3>Подтвердите удаление</h3>
+      <p class="danger-confirm-text">
+        Вы выполняете действие при котором данные могут удалиться, все равно удалить? действие не обратимо
+      </p>
+      <p class="danger-confirm-detail" id="danger-confirm-detail"></p>
+      <div class="danger-confirm-actions">
+        <button class="btn btn-secondary" onclick="closeDangerConfirm()">Отмена</button>
+        <button class="btn btn-danger" onclick="confirmDangerAction()">Всё равно удалить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Flippy Bird: question during the pause -->
+  <div id="bird-question-modal" class="modal" style="display:none;">
+    <div class="modal-content bird-question-card">
+      <div class="bird-q-head">
+        <span class="bird-q-label">🐤 Вопрос на паузе</span>
+        <span class="bird-q-timer" id="bird-q-timer">15</span>
+      </div>
+      <div class="bird-q-progress"><div class="bird-q-progress-fill" id="bird-q-progress-fill"></div></div>
+      <p class="bird-q-text" id="bird-q-text"></p>
+      <div class="bird-q-options" id="bird-q-options"></div>
+      <div class="bird-q-feedback" id="bird-q-feedback"></div>
+      <div class="bird-q-lives" id="bird-q-lives">❤️❤️❤️</div>
+    </div>
+  </div>
+
+  <!-- Flippy Bird: daily limit -->
+  <div id="bird-limit-modal" class="modal" style="display:none;">
+    <div class="modal-content bird-limit-card">
+      <div class="bird-limit-icon">🎮</div>
+      <h3>Игры на сегодня закончились</h3>
+      <p id="bird-limit-text">Бесплатный тариф: 3 игры в день. Посмотрите короткую рекламу или откройте Pro.</p>
+      <button class="btn btn-primary" id="bird-limit-ad-btn" onclick="watchBirdRewardAd()">🎬 Смотреть рекламу +1 игра</button>
+      <button class="btn btn-secondary" onclick="showPaymentModal();closeBirdLimitModal()">💎 Pro — без лимитов</button>
+      <button class="btn btn-secondary" onclick="closeBirdLimitModal()">Позже</button>
+      <p class="bird-ad-note">Реклама пока в демо-режиме: место под rewarded-видео готово, доход появится после подключения рекламной сети.</p>
+    </div>
+  </div>
+
+  <!-- Flippy Bird: rewarded ad placeholder -->
+  <div id="bird-ad-modal" class="modal" style="display:none;">
+    <div class="modal-content bird-ad-card">
+      <div class="bird-ad-brand">РЕКЛАМА</div>
+      <div class="bird-ad-body">
+        <div class="bird-ad-anim">🎬</div>
+        <p>Здесь будет rewarded-видео</p>
+        <p class="bird-ad-note">Демо-плейсхолдер. После подключения рекламной сети этот блок монетизируется.</p>
+      </div>
+      <button class="btn btn-primary" id="bird-ad-claim-btn" disabled onclick="claimBirdReward()">Подождите…</button>
+    </div>
+  </div>
+
+  <!-- Bulk options input -->
+  <div id="bulk-options-modal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>📋 Варианты списком</h3>
+        <button class="modal-close" onclick="closeBulkOptions()">✕</button>
+      </div>
+      <p class="admin-hint" style="margin-bottom:10px;">Каждый вариант с новой строки. Поставьте <b>*</b> перед правильным (если правильных несколько — у каждого).</p>
+      <textarea id="bulk-options-text" class="input-field" rows="8" placeholder="* 60 км/ч&#10;80 км/ч&#10;90 км/ч"></textarea>
+      <button class="btn btn-primary" onclick="applyBulkOptions()" style="margin-top:12px;width:100%;">Заполнить варианты</button>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
   <script src="app.js"></script>
 </body>

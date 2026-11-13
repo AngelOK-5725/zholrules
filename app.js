@@ -313,6 +313,12 @@ let appSettings = {
   free_error_limit: 10,
   pro_stars_price: 1500,
   lives_stars_price: 5,
+  free_bird_games: 3,
+  bird_obstacles_min: 4,
+  bird_obstacles_max: 11,
+  bird_question_seconds: 15,
+  bird_ad_reward_max: 5,
+  bird_ad_duration: 5,
 };
 
 async function loadPublicSettings() {
@@ -401,6 +407,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Check daily reset
   checkDailyReset();
 
+  // Flippy Bird daily quota (owner / Pro are unlimited)
+  refreshBirdStatus();
+
   // Show splash, then main app
   showSplash();
 });
@@ -466,7 +475,7 @@ async function apiGet(path) {
     if (res.status === 403) throw new Error('Access denied.');
     if (res.status === 404) throw new Error('Not found.');
     if (res.status >= 500) throw new Error(`Server error (${res.status}). Try again later.`);
-    throw new Error(msg);
+    throw apiError(msg, res.status, err);
   }
   return res.json();
 }
@@ -524,6 +533,13 @@ async function apiUploadForm(path, formData) {
   return handleApiResponse(res);
 }
 
+function apiError(msg, status, data) {
+  const error = new Error(msg);
+  error.status = status;
+  error.data = data || {};
+  return error;
+}
+
 async function handleApiResponse(res) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -531,9 +547,26 @@ async function handleApiResponse(res) {
     if (res.status === 401) throw new Error('Authorization required. Open via Telegram bot.');
     if (res.status === 403) throw new Error('Access denied.');
     if (res.status >= 500) throw new Error(`Server error (${res.status}). Try again later.`);
-    throw new Error(msg);
+    throw apiError(msg, res.status, err);
   }
   return res.json();
+}
+
+// ============================================
+// TOASTS
+// ============================================
+function toast(message, type = 'success', ms = 2800) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  el.textContent = message;
+  container.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('toast-show'));
+  setTimeout(() => {
+    el.classList.remove('toast-show');
+    setTimeout(() => el.remove(), 220);
+  }, ms);
 }
 
 // ============================================
@@ -615,26 +648,18 @@ function loadState() {
   }
 }
 
+// Streak day boundary is Kazakhstan time (UTC+5), same as the server.
+function appTodayString() {
+  const now = new Date();
+  const kz = new Date(now.getTime() + 5 * 60 * 60 * 1000);
+  return kz.toISOString().split('T')[0];
+}
+
 function checkDailyReset() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = appTodayString();
 
   if (state.stats.lastActiveDate !== today) {
-    // Check streak
-    const lastDate = state.stats.lastActiveDate ? new Date(state.stats.lastActiveDate) : null;
-    const todayDate = new Date(today);
-
-    if (lastDate) {
-      const diffDays = Math.floor((todayDate - lastDate) / (1000 * 60 * 60 * 24));
-      if (diffDays === 1) {
-        state.stats.streak++; // Consecutive day!
-      } else if (diffDays > 1) {
-        state.stats.streak = 1; // Reset streak, start fresh today
-      }
-    } else {
-      state.stats.streak = 1; // First time user
-    }
-
-    // Reset daily stats
+    // Streak is computed by the server on every answer — no local increments.
     state.stats.dailyAnswered = 0;
     state.stats.dailyCorrect = 0;
     state.stats.lastActiveDate = today;
@@ -919,6 +944,19 @@ function switchTab(tabName) {
   // Load admin dashboard when opening the admin tab
   if (tabName === 'admin') {
     loadDashboard();
+  }
+
+  // Keep the bird game paused while its tab is not visible
+  if (tabName === 'game') {
+    if (typeof refreshBirdStatus === 'function') refreshBirdStatus();
+    const birdVisible = document.getElementById('bird-mode')?.style.display !== 'none';
+    if (birdVisible && typeof birdPause === 'function') birdPause(false);
+    setTimeout(() => {
+      resizeBirdCanvas();
+      if (!BIRD.state?.running) drawBirdFrame();
+    }, 60);
+  } else if (typeof birdPause === 'function') {
+    birdPause(true);
   }
 
   // Haptic feedback
@@ -1245,14 +1283,7 @@ function checkAnswer() {
     }
   }
 
-  // Update streak
-  const today = new Date().toISOString().split('T')[0];
-  if (state.stats.dailyAnswered === 1 && state.stats.dailyCorrect === 1) {
-    if (state.stats.lastActiveDate !== today) {
-      state.stats.streak++;
-    }
-  }
-
+  // Streak is updated by the server in /api/answer.
   saveState();
 
   // Update UI
@@ -1621,16 +1652,18 @@ function switchAdminTab(tab) {
 
 let editingQuestionId = null;
 
-function populateAdminCategories() {
+function populateAdminCategories(skipDraft = false) {
   // Reset edit state
   editingQuestionId = null;
 
   const select = document.getElementById('admin-category');
   select.innerHTML = questionsData.categories.map(cat =>
-    `<option value="${cat.id}">${cat.icon} ${cat.name}</option>`
+    `<option value="${cat.id}">${cat.icon} ${cat.name} (${cat.count || 0})</option>`
   ).join('');
 
   resetQuestionForm();
+  renderAdminCategoryFilters();
+  if (!skipDraft) restoreAdminDraft();
 }
 
 function onMediaTypeChange(select) {
@@ -1664,11 +1697,21 @@ function resetQuestionForm() {
 
   // Reset save button label
   const saveBtn = document.getElementById('admin-save-btn');
-  if (saveBtn) saveBtn.textContent = '💾 Сохранить вопрос';
+  if (saveBtn) saveBtn.textContent = '💾 Сохранить';
+
+  // Editor chrome
+  const title = document.getElementById('admin-editor-title');
+  if (title) title.textContent = 'Новый вопрос';
+  const moreBtn = document.getElementById('admin-save-more-btn');
+  if (moreBtn) moreBtn.style.display = '';
+  const draftBadge = document.getElementById('admin-draft-badge');
+  if (draftBadge) draftBadge.style.display = 'none';
 
   // Reset options
   document.getElementById('admin-options-list').innerHTML =
     adminOptionBlockHtml(1) + adminOptionBlockHtml(2);
+
+  updateAdminValidation();
 }
 
 function escapeHtml(str) {
@@ -1677,6 +1720,20 @@ function escapeHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+// Old uploads stored absolute http:// URLs; Telegram's HTTPS WebView blocks
+// them as mixed content. Serve them over https (or same-origin).
+function normalizeMediaUrl(url) {
+  if (!url) return '';
+  let value = String(url).trim();
+  if (value.startsWith('http://zholrules.onrender.com')) {
+    value = `https://${value.slice('http://'.length)}`;
+  }
+  if (API_BASE && value.startsWith(`${API_BASE}/`)) {
+    value = value.slice(API_BASE.length);
+  }
+  return value;
 }
 
 function fillQuestionForm(q) {
@@ -1709,6 +1766,7 @@ function fillQuestionForm(q) {
     if (om && om.media_url) {
       const urlInput = block.querySelector('.option-media-url');
       urlInput.value = om.media_url;
+      block.querySelector('.option-media').style.display = 'flex';
       previewOptionMedia(urlInput);
     }
   });
@@ -1728,19 +1786,39 @@ function editQuestion(id) {
   document.querySelectorAll('.admin-panel').forEach(p => p.classList.remove('active'));
   document.getElementById('admin-create').classList.add('active');
 
-  populateAdminCategories(); // resets form + editing state
+  populateAdminCategories(true); // resets form + editing state
   editingQuestionId = id;
   fillQuestionForm(q);
   const saveBtn = document.getElementById('admin-save-btn');
   if (saveBtn) saveBtn.textContent = '💾 Сохранить изменения';
+  const title = document.getElementById('admin-editor-title');
+  if (title) title.textContent = `Редактирование #${id}`;
+  const moreBtn = document.getElementById('admin-save-more-btn');
+  if (moreBtn) moreBtn.style.display = 'none';
+  const draftBadge = document.getElementById('admin-draft-badge');
+  if (draftBadge) draftBadge.style.display = 'none';
+  updateAdminValidation();
 }
 
 function addAdminOption() {
   const container = document.getElementById('admin-options-list');
   container.insertAdjacentHTML('beforeend', adminOptionBlockHtml(container.children.length + 1));
+  const inputs = container.querySelectorAll('.option-row input[type="text"]');
+  inputs[inputs.length - 1]?.focus();
 }
 
-async function saveQuestion() {
+function removeAdminOption(btn) {
+  const blocks = document.querySelectorAll('#admin-options-list .option-block');
+  if (blocks.length <= 2) {
+    toast('Нужно минимум 2 варианта', 'error');
+    return;
+  }
+  btn.closest('.option-block').remove();
+  updateAdminValidation();
+  scheduleDraftSave();
+}
+
+async function saveQuestion(opts = {}) {
   const category = document.getElementById('admin-category').value;
   const questionText = document.getElementById('admin-question').value.trim();
   const mediaType = document.getElementById('admin-media-type').value;
@@ -1753,12 +1831,12 @@ async function saveQuestion() {
   const isMultiple = document.getElementById('admin-choice-type').value === 'multiple';
 
   if (!questionText && !isMediaOnly) {
-    alert('Введите текст вопроса или отметьте «Только медиа»');
+    toast('Введите текст вопроса или отметьте «Только медиа»', 'error');
     return;
   }
 
   if (isMediaOnly && !questionText && !finalMediaUrl) {
-    alert('Для вопроса «только медиа» добавьте медиафайл или YouTube-ссылку');
+    toast('Для вопроса «только медиа» добавьте медиафайл или YouTube-ссылку', 'error');
     return;
   }
 
@@ -1778,17 +1856,17 @@ async function saveQuestion() {
   });
 
   if (options.length < 2) {
-    alert('Добавьте минимум 2 варианта ответа');
+    toast('Добавьте минимум 2 варианта ответа', 'error');
     return;
   }
 
   if (correctOptions.length === 0) {
-    alert('Отметьте правильный ответ — нажмите зелёную кнопку «✓ Правильный» напротив нужного варианта');
+    toast('Отметьте правильный ответ кнопкой ✓', 'error');
     return;
   }
 
   if (!isMultiple && correctOptions.length > 1) {
-    alert('Отмечено несколько правильных ответов, а тип выбора — «один правильный».\n\nЛибо оставьте зелёным только один вариант, либо смените тип выбора на «Несколько правильных».');
+    toast('Несколько ✓ при типе «один ответ». Оставьте один или включите «Несколько правильных».', 'error', 4200);
     return;
   }
 
@@ -1806,6 +1884,7 @@ async function saveQuestion() {
     difficulty: difficulty,
   };
 
+  const wasEditing = !!editingQuestionId;
   try {
     if (editingQuestionId) {
       await apiPut(`/api/questions/${editingQuestionId}`, payload);
@@ -1814,8 +1893,19 @@ async function saveQuestion() {
     }
     await loadQuestions();
     renderAdminQuestionsList();
-    resetQuestionForm();
-    alert('✅ Вопрос сохранён в базу!');
+    clearAdminDraft();
+
+    if (opts.keepOpen && !wasEditing) {
+      // Fast batch entry: keep the category, clear only the content.
+      resetQuestionForm();
+      document.getElementById('admin-category').value = category;
+      document.getElementById('admin-question').focus();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      toast('✅ Сохранено. Введите следующий вопрос');
+    } else {
+      resetQuestionForm();
+      toast(wasEditing ? '✅ Изменения сохранены' : '✅ Вопрос сохранён в базу');
+    }
   } catch (e) {
     console.warn('Could not save question to server, saving locally:', e);
     // Fallback: keep local-only (e.g. dev without server)
@@ -1829,8 +1919,169 @@ async function saveQuestion() {
     saveQuestionsData();
     renderAdminQuestionsList();
     resetQuestionForm();
-    alert('⚠️ Сервер недоступен — вопрос сохранён локально.\n' + e.message);
+    toast('⚠️ Сервер недоступен — сохранено только локально', 'error', 4500);
   }
+}
+
+// ============================================
+// ADMIN: QUICK ENTRY (draft, bulk options, validation)
+// ============================================
+const ADMIN_DRAFT_KEY = 'zholrules_admin_draft_v1';
+let adminDraftTimer = null;
+
+function autosizeTextarea(el) {
+  el.style.height = 'auto';
+  el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
+}
+
+function collectAdminOptions() {
+  const options = [];
+  const correctOptions = [];
+  document.querySelectorAll('#admin-options-list .option-row').forEach((row) => {
+    const text = row.querySelector('input[type="text"]').value.trim();
+    if (!text) return;
+    if (row.querySelector('.option-correct-btn')?.classList.contains('checked')) {
+      correctOptions.push(options.length);
+    }
+    options.push(text);
+  });
+  return { options, correctOptions };
+}
+
+function updateAdminValidation() {
+  const el = document.getElementById('admin-validation');
+  if (!el) return;
+  const { options, correctOptions } = collectAdminOptions();
+  const question = document.getElementById('admin-question')?.value.trim() || '';
+  const isMediaOnly = document.getElementById('admin-media-only')?.checked;
+  const parts = [];
+  if (!question && !isMediaOnly) parts.push('нет текста вопроса');
+  parts.push(`${options.length} вариант(ов)`);
+  parts.push(correctOptions.length ? `✓ ${correctOptions.length}` : 'ответ не выбран');
+  el.textContent = parts.join(' · ');
+  el.classList.toggle('is-ok', !!question && options.length >= 2 && correctOptions.length > 0);
+}
+
+function collectAdminDraft() {
+  const options = [...document.querySelectorAll('#admin-options-list .option-block')].map(block => ({
+    text: block.querySelector('.option-row input[type="text"]').value,
+    correct: block.querySelector('.option-correct-btn')?.classList.contains('checked') || false,
+  }));
+  return {
+    category: document.getElementById('admin-category')?.value || '',
+    question: document.getElementById('admin-question')?.value || '',
+    explanation: document.getElementById('admin-explanation')?.value || '',
+    difficulty: document.getElementById('admin-difficulty')?.value || 'easy',
+    choice: document.getElementById('admin-choice-type')?.value || 'single',
+    options,
+  };
+}
+
+function scheduleDraftSave() {
+  clearTimeout(adminDraftTimer);
+  adminDraftTimer = setTimeout(saveAdminDraft, 500);
+}
+
+function saveAdminDraft() {
+  if (editingQuestionId) return;
+  const draft = collectAdminDraft();
+  const hasContent = draft.question.trim() || draft.options.some(o => o.text.trim());
+  if (!hasContent) { clearAdminDraft(); return; }
+  try {
+    localStorage.setItem(ADMIN_DRAFT_KEY, JSON.stringify(draft));
+    const badge = document.getElementById('admin-draft-badge');
+    if (badge) badge.style.display = '';
+  } catch (e) { /* storage unavailable */ }
+}
+
+function clearAdminDraft() {
+  try { localStorage.removeItem(ADMIN_DRAFT_KEY); } catch (e) { /* ignore */ }
+  const badge = document.getElementById('admin-draft-badge');
+  if (badge) badge.style.display = 'none';
+}
+
+function restoreAdminDraft() {
+  let draft = null;
+  try { draft = JSON.parse(localStorage.getItem(ADMIN_DRAFT_KEY) || 'null'); } catch (e) { return; }
+  if (!draft || (!draft.question && !(draft.options || []).some(o => (o.text || '').trim()))) return;
+
+  const qEl = document.getElementById('admin-question');
+  if (qEl) { qEl.value = draft.question || ''; autosizeTextarea(qEl); }
+  const catEl = document.getElementById('admin-category');
+  if (catEl && draft.category) catEl.value = draft.category;
+  const expEl = document.getElementById('admin-explanation');
+  if (expEl) expEl.value = draft.explanation || '';
+  const diffEl = document.getElementById('admin-difficulty');
+  if (diffEl) diffEl.value = draft.difficulty || 'easy';
+  const choiceEl = document.getElementById('admin-choice-type');
+  if (choiceEl) choiceEl.value = draft.choice || 'single';
+
+  const opts = draft.options || [];
+  if (opts.length) {
+    const container = document.getElementById('admin-options-list');
+    container.innerHTML = '';
+    opts.forEach((opt, idx) => {
+      container.insertAdjacentHTML('beforeend', adminOptionBlockHtml(idx + 1));
+      const block = container.lastElementChild;
+      block.querySelector('.option-row input[type="text"]').value = opt.text || '';
+      if (opt.correct) block.querySelector('.option-correct-btn').classList.add('checked');
+    });
+  }
+  const badge = document.getElementById('admin-draft-badge');
+  if (badge) badge.style.display = '';
+  updateAdminValidation();
+  toast('Черновик восстановлен', 'info', 2200);
+}
+
+function openBulkOptions() {
+  const modal = document.getElementById('bulk-options-modal');
+  modal.style.display = 'flex';
+  setTimeout(() => document.getElementById('bulk-options-text').focus(), 50);
+}
+
+function closeBulkOptions() {
+  document.getElementById('bulk-options-modal').style.display = 'none';
+}
+
+function applyBulkOptions() {
+  const raw = document.getElementById('bulk-options-text').value;
+  const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length < 2) { toast('Нужно минимум 2 строки', 'error'); return; }
+
+  const container = document.getElementById('admin-options-list');
+  container.innerHTML = '';
+  let correctCount = 0;
+  lines.forEach((line, idx) => {
+    const isCorrect = /^[*+✓]/.test(line);
+    if (isCorrect) correctCount++;
+    const text = line.replace(/^[*+✓]\s*/, '').trim();
+    container.insertAdjacentHTML('beforeend', adminOptionBlockHtml(idx + 1));
+    const block = container.lastElementChild;
+    block.querySelector('.option-row input[type="text"]').value = text;
+    if (isCorrect) block.querySelector('.option-correct-btn').classList.add('checked');
+  });
+  document.getElementById('admin-choice-type').value = correctCount > 1 ? 'multiple' : 'single';
+  closeBulkOptions();
+  updateAdminValidation();
+  scheduleDraftSave();
+}
+
+function duplicateQuestion(id) {
+  const q = questionsData.questions.find(x => x.id === id);
+  if (!q) return;
+  document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('admin-tab-create').classList.add('active');
+  document.querySelectorAll('.admin-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('admin-create').classList.add('active');
+
+  populateAdminCategories(true);
+  editingQuestionId = null;
+  fillQuestionForm({ ...q, id: undefined });
+  document.getElementById('admin-editor-title').textContent = `Копия вопроса #${id}`;
+  document.getElementById('admin-save-more-btn').style.display = '';
+  updateAdminValidation();
+  toast('Копия открыта — проверьте и сохраните', 'info', 2400);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 // ============================================
@@ -1851,7 +2102,7 @@ async function handleMediaFile(input) {
     formData.append('file', file);
     const data = await apiUploadForm('/api/upload', formData);
     document.getElementById('admin-media-url').value = data.url;
-    statusEl.textContent = '✅ Файл загружен!';
+    statusEl.textContent = '✅ Файл загружен и сохранён в базе!';
     showMediaPreview(data.url, isVideo);
   } catch (e) {
     console.error('Upload failed:', e);
@@ -1861,12 +2112,14 @@ async function handleMediaFile(input) {
 
 function showMediaPreview(url, isVideo) {
   const preview = document.getElementById('admin-media-preview');
+  url = normalizeMediaUrl(url);
   preview.innerHTML = isVideo
     ? `<video src="${url}" controls muted playsinline style="max-width:100%;border-radius:12px;background:#000;"></video>`
     : `<img src="${url}" alt="Превью" style="max-width:100%;border-radius:12px;">`;
 }
 
 function previewMediaFromUrl(value) {
+  value = normalizeMediaUrl(value);
   if (!value) {
     document.getElementById('admin-media-preview').innerHTML = '';
     return;
@@ -1895,6 +2148,7 @@ function parseYouTubeId(url) {
 }
 
 function renderMediaInto(el, mediaType, mediaUrl, optionText) {
+  mediaUrl = normalizeMediaUrl(mediaUrl);
   const ytId = parseYouTubeId(mediaUrl);
   if (ytId) {
     el.innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${ytId}?rel=0&playsinline=1" title="Видео${optionText ? ' — ' + escapeHtml(optionText) : ''}" loading="lazy" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>`;
@@ -1912,14 +2166,15 @@ function renderMediaInto(el, mediaType, mediaUrl, optionText) {
 function optionMediaHtml(q, idx, context) {
   const om = q.option_media && (q.option_media[String(idx)] || q.option_media[idx]);
   if (!om || !om.media_url) return '';
-  const ytId = parseYouTubeId(om.media_url);
+  const mediaUrl = normalizeMediaUrl(om.media_url);
+  const ytId = parseYouTubeId(mediaUrl);
   if (ytId) {
     return `<div class="${context}-option-media"><iframe src="https://www.youtube-nocookie.com/embed/${ytId}?rel=0&playsinline=1" title="Медиа ответа" loading="lazy" allow="accelerometer; encrypted-media; picture-in-picture; web-share" allowfullscreen></iframe></div>`;
   }
   if (om.media_type === 'video') {
-    return `<div class="${context}-option-media"><video src="${escapeHtml(om.media_url)}" controls muted playsinline></video></div>`;
+    return `<div class="${context}-option-media"><video src="${escapeHtml(mediaUrl)}" controls muted playsinline></video></div>`;
   }
-  return `<div class="${context}-option-media"><img src="${escapeHtml(om.media_url)}" alt="" loading="lazy"></div>`;
+  return `<div class="${context}-option-media"><img src="${escapeHtml(mediaUrl)}" alt="" loading="lazy"></div>`;
 }
 
 // ============================================
@@ -1931,7 +2186,8 @@ function adminOptionBlockHtml(count) {
       <div class="option-row">
         <input type="text" class="input-field" placeholder="Вариант ${count}">
         <button type="button" class="option-media-btn" onclick="toggleOptionMedia(this)" title="Медиа для ответа">🖼</button>
-        <button type="button" class="option-correct-btn" onclick="toggleCorrectOption(this)" title="Отметить как правильный">✓ Правильный</button>
+        <button type="button" class="option-correct-btn" onclick="toggleCorrectOption(this)" title="Отметить как правильный">✓</button>
+        <button type="button" class="option-remove-btn" onclick="removeAdminOption(this)" title="Удалить вариант">✕</button>
       </div>
       <div class="option-media" style="display:none;">
         <input type="text" class="input-field option-media-url" placeholder="URL картинки или YouTube-ссылка (необязательно)" oninput="previewOptionMedia(this)">
@@ -1970,7 +2226,7 @@ function toggleOptionMedia(btn) {
 
 function previewOptionMedia(input) {
   const panel = input.closest('.option-media');
-  const url = input.value.trim();
+  const url = normalizeMediaUrl(input.value.trim());
   const preview = panel.querySelector('.option-media-preview');
   const btn = panel.closest('.option-block').querySelector('.option-media-btn');
   btn.classList.toggle('has-media', !!url);
@@ -2025,14 +2281,46 @@ function collectOptionMedia() {
 
 let adminQuestionSearch = '';
 let adminQuestionPage = 1;
+let adminCategoryFilter = '';
 const ADMIN_PAGE_SIZE = 20;
+
+function adminCategoryById(slug) {
+  return (questionsData?.categories || []).find(c => c.id === slug);
+}
+
+function renderAdminCategoryFilters() {
+  const select = document.getElementById('admin-category-filter');
+  const chips = document.getElementById('admin-category-chips');
+  if (!questionsData) return;
+  const categories = questionsData.categories || [];
+
+  if (select) {
+    select.innerHTML = '<option value="">Все категории</option>' + categories.map(c =>
+      `<option value="${escapeHtml(c.id)}">${escapeHtml(c.icon || '')} ${escapeHtml(c.name)}</option>`
+    ).join('');
+    select.value = adminCategoryFilter;
+  }
+
+  if (chips) {
+    chips.innerHTML = [
+      `<button class="admin-chip ${adminCategoryFilter === '' ? 'active' : ''}" onclick="onAdminCategoryFilter('')">Все <span>${questionsData.questions.length}</span></button>`,
+      ...categories.map(c =>
+        `<button class="admin-chip ${adminCategoryFilter === c.id ? 'active' : ''}" onclick="onAdminCategoryFilter('${escapeHtml(c.id)}')">${escapeHtml(c.icon || '')} ${escapeHtml(c.name)} <span>${c.count || 0}</span></button>`
+      ),
+    ].join('');
+  }
+}
 
 function renderAdminQuestionsList() {
   const container = document.getElementById('admin-questions-list');
   if (!container || !questionsData || !questionsData.questions) return;
+  renderAdminCategoryFilters();
 
   const query = (adminQuestionSearch || '').toLowerCase().trim();
   let filtered = [...questionsData.questions];
+  if (adminCategoryFilter) {
+    filtered = filtered.filter(item => item.category === adminCategoryFilter);
+  }
   if (query) {
     filtered = filtered.filter(item =>
       item.question.toLowerCase().includes(query) ||
@@ -2046,15 +2334,23 @@ function renderAdminQuestionsList() {
   const start = (adminQuestionPage - 1) * ADMIN_PAGE_SIZE;
   const pageItems = filtered.slice(start, start + ADMIN_PAGE_SIZE);
 
-  container.innerHTML = pageItems.map(item => `
+  container.innerHTML = pageItems.map(item => {
+    const cat = adminCategoryById(item.category);
+    return `
     <div class="admin-question-card">
-      <span class="admin-q-id">#${item.id}</span>
-      <span class="admin-q-text">${item.question ? escapeHtml(item.question) : '<i>— только медиа —</i>'}</span>
-      ${item.media_type !== 'none' ? `<span class="admin-q-media">${item.media_type === 'image' ? '🖼️' : '🎬'}</span>` : ''}
-      <button class="admin-q-edit" onclick="editQuestion(${item.id})" title="Редактировать">✏️</button>
-      <button class="admin-q-delete" onclick="deleteQuestion(${item.id})" title="Удалить">🗑️</button>
-    </div>
-  `).join('') || '<p style="color:var(--tg-theme-hint-color);">Ничего не найдено</p>';
+      <div class="admin-q-top">
+        <span class="admin-q-id">#${item.id}</span>
+        <span class="admin-q-cat">${cat ? `${escapeHtml(cat.icon || '')} ${escapeHtml(cat.name)}` : escapeHtml(item.category)}</span>
+        ${item.media_type !== 'none' ? `<span class="admin-q-media">${item.media_type === 'image' ? '🖼️' : '🎬'}</span>` : ''}
+      </div>
+      <div class="admin-q-text">${item.question ? escapeHtml(item.question) : '<i>— только медиа —</i>'}</div>
+      <div class="admin-q-actions">
+        <button class="admin-q-edit" onclick="editQuestion(${item.id})" title="Редактировать">✏️</button>
+        <button class="admin-q-copy" onclick="duplicateQuestion(${item.id})" title="Дублировать">⧉</button>
+        <button class="admin-q-delete" onclick="deleteQuestion(${item.id})" title="Удалить">🗑️</button>
+      </div>
+    </div>`;
+  }).join('') || '<p style="color:var(--tg-theme-hint-color);text-align:center;padding:20px 0;">Ничего не найдено</p>';
 
   // Pager
   const pager = document.getElementById('admin-questions-pager');
@@ -2075,20 +2371,78 @@ function onAdminQuestionSearch(value) {
   renderAdminQuestionsList();
 }
 
-async function deleteQuestion(id) {
-  if (!confirm('Удалить вопрос #' + id + '?')) return;
+function onAdminCategoryFilter(value) {
+  adminCategoryFilter = value || '';
+  adminQuestionPage = 1;
+  renderAdminQuestionsList();
+}
 
-  try {
-    await apiDelete(`/api/questions/${id}`);
-    await loadQuestions();
-    renderAdminQuestionsList();
-    alert('✅ Вопрос удалён');
-  } catch (e) {
-    console.warn('Could not delete from server, removing locally:', e);
-    questionsData.questions = questionsData.questions.filter(q => q.id !== id);
-    saveQuestionsData();
-    renderAdminQuestionsList();
+// Keyboard-first entry: Enter adds an option, Ctrl/Cmd+Enter saves.
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && e.target.closest('#admin-create')) {
+    e.preventDefault();
+    saveQuestion();
+    return;
   }
+  if (e.key === 'Enter' && !e.shiftKey &&
+      e.target.matches('#admin-options-list .option-row input[type="text"]')) {
+    e.preventDefault();
+    addAdminOption();
+  }
+});
+
+document.addEventListener('input', (e) => {
+  if (!e.target.closest('#admin-create')) return;
+  if (e.target.id === 'admin-question') autosizeTextarea(e.target);
+  updateAdminValidation();
+  scheduleDraftSave();
+});
+
+document.addEventListener('click', (e) => {
+  if (e.target.closest('#admin-options-list .option-correct-btn')) {
+    setTimeout(updateAdminValidation, 0);
+  }
+});
+
+// ============================================
+// ADMIN: DANGER CONFIRMATION
+// ============================================
+let dangerConfirmCallback = null;
+
+function openDangerConfirm(detail, onConfirm) {
+  dangerConfirmCallback = onConfirm;
+  document.getElementById('danger-confirm-detail').textContent = detail || '';
+  document.getElementById('danger-confirm-modal').style.display = 'flex';
+}
+
+function closeDangerConfirm() {
+  dangerConfirmCallback = null;
+  document.getElementById('danger-confirm-modal').style.display = 'none';
+}
+
+async function confirmDangerAction() {
+  const callback = dangerConfirmCallback;
+  closeDangerConfirm();
+  if (callback) await callback();
+}
+
+function deleteQuestion(id) {
+  const q = questionsData.questions.find(x => x.id === id);
+  const title = q && q.question ? q.question.slice(0, 90) : '— только медиа —';
+
+  openDangerConfirm(`Вопрос #${id} «${title}» будет удалён.`, async () => {
+    try {
+      await apiDelete(`/api/questions/${id}`);
+      await loadQuestions();
+      renderAdminQuestionsList();
+      toast('✅ Вопрос удалён');
+    } catch (e) {
+      console.warn('Could not delete from server, removing locally:', e);
+      questionsData.questions = questionsData.questions.filter(q => q.id !== id);
+      saveQuestionsData();
+      renderAdminQuestionsList();
+    }
+  });
 }
 
 function saveQuestionsData() {
@@ -2113,19 +2467,24 @@ async function renderAdminCategoriesList() {
   try {
     const categories = await apiGet('/api/categories');
     adminCategoriesCache = categories;
+    const countBadge = document.getElementById('categories-count-badge');
+    if (countBadge) countBadge.textContent = categories.length;
+
     const container = document.getElementById('categories-admin-list');
     container.innerHTML = categories.map(cat => `
-      <div class="admin-question-card">
-        <span style="font-size:24px;">${cat.icon}</span>
-        <div style="flex:1;">
-          <div style="font-weight:600;">${cat.name}</div>
-          <div style="font-size:12px;color:var(--tg-theme-hint-color);">
-            slug: ${cat.slug} | ${cat.count || 0} вопросов
+      <div class="admin-category-card">
+        <span class="admin-category-icon" style="background:${cat.color || '#FFB300'}22;">${cat.icon || '📚'}</span>
+        <div class="admin-category-info">
+          <div class="admin-category-name">${escapeHtml(cat.name)}</div>
+          <div class="admin-category-meta">
+            <span class="admin-count-badge">${cat.count || 0} вопросов</span>
+            <span class="admin-category-slug">${escapeHtml(cat.slug)}</span>
           </div>
         </div>
-        <span style="width:24px;height:24px;border-radius:50%;background:${cat.color};display:inline-block;"></span>
-        <button class="admin-q-edit" onclick="editCategory(${cat.id})" title="Редактировать">✏️</button>
-        <button class="admin-q-delete" onclick="deleteCategory(${cat.id})" title="Удалить">🗑️</button>
+        <div class="admin-category-actions">
+          <button class="admin-q-edit" onclick="editCategory(${cat.id})" title="Редактировать">✏️</button>
+          <button class="admin-q-delete" onclick="deleteCategory(${cat.id})" title="Удалить">🗑️</button>
+        </div>
       </div>
     `).join('') || '<p style="color:var(--tg-theme-hint-color);">Пока нет категорий</p>';
   } catch (e) {
@@ -2145,6 +2504,8 @@ function resetCategoryForm() {
   if (saveBtn) saveBtn.textContent = '➕ Добавить категорию';
   const cancelBtn = document.getElementById('cat-cancel-btn');
   if (cancelBtn) cancelBtn.style.display = 'none';
+  const formTitle = document.getElementById('cat-form-title');
+  if (formTitle) formTitle.textContent = 'Новая категория';
 }
 
 function editCategory(id) {
@@ -2159,6 +2520,8 @@ function editCategory(id) {
   document.getElementById('cat-color').value = cat.color || '#FFB300';
   document.getElementById('cat-save-btn').textContent = '💾 Сохранить изменения';
   document.getElementById('cat-cancel-btn').style.display = 'inline-block';
+  const formTitle = document.getElementById('cat-form-title');
+  if (formTitle) formTitle.textContent = `Редактирование: ${cat.name}`;
 }
 
 async function saveCategory() {
@@ -2174,17 +2537,22 @@ async function saveCategory() {
 
   try {
     if (editingCategoryId) {
-      await apiPut(`/api/categories/${editingCategoryId}`, { name, slug, icon, color });
-      alert('✅ Категория обновлена!');
+      const res = await apiPut(`/api/categories/${editingCategoryId}`, { name, slug, icon, color });
+      // Questions are re-linked on the server when the slug changes —
+      // reload them so local state matches the new category identifier.
+      await loadQuestions();
+      await refreshCategories();
+      renderAdminQuestionsList();
+      resetCategoryForm();
+      toast(`✅ «${name}» обновлена. Вопросы сохранены: ${res.questions_kept ?? 0}.`, 'success', 3500);
     } else {
       await apiPost('/api/categories', { name, slug, icon, color });
-      alert('✅ Категория создана!');
+      await refreshCategories();
+      resetCategoryForm();
+      toast('✅ Категория создана');
     }
-
-    await refreshCategories();
-    resetCategoryForm();
   } catch (e) {
-    alert(`Ошибка: ${e.message}`);
+    toast(`Ошибка: ${e.message}`, 'error', 3500);
   }
 }
 
@@ -2192,16 +2560,18 @@ async function deleteCategory(id) {
   const cat = adminCategoriesCache.find(c => c.id === id);
   if (!cat) return;
 
-  // No questions → no choices needed, just confirm and delete
+  // No questions → nothing else to preserve, confirm the irreversible delete
   if (!cat.count) {
-    if (!confirm(`Удалить категорию «${cat.name}»?`)) return;
-    try {
-      await apiDelete(`/api/categories/${id}`);
-      await refreshCategories();
-      alert('✅ Категория удалена');
-    } catch (e) {
-      alert(`Ошибка: ${e.message}`);
-    }
+    openDangerConfirm(`Категория «${cat.name}» будет удалена.`, async () => {
+      try {
+        await apiDelete(`/api/categories/${id}`);
+        await loadQuestions();
+        await refreshCategories();
+        toast('✅ Категория удалена');
+      } catch (e) {
+        toast(`Ошибка: ${e.message}`, 'error');
+      }
+    });
     return;
   }
 
@@ -2245,7 +2615,7 @@ async function confirmDeleteCategory(mode) {
       );
       await refreshCategories();
       closeDeleteCategoryModal();
-      alert(`✅ Категория удалена. ${res.moved_questions} вопрос(ов) перемещено.`);
+      toast(`✅ Категория удалена. Перемещено вопросов: ${res.moved_questions}`);
     } else if (mode === 'move-new') {
       const name = document.getElementById('delete-cat-new-name').value.trim();
       if (!name) {
@@ -2258,20 +2628,26 @@ async function confirmDeleteCategory(mode) {
       );
       await refreshCategories();
       closeDeleteCategoryModal();
-      alert(`✅ Категория удалена. ${res.moved_questions} вопрос(ов) перемещено в «${name}».`);
+      toast(`✅ Категория удалена. Перемещено в «${name}»: ${res.moved_questions}`);
     } else if (mode === 'delete') {
-      if (!confirm(
-        `Удалить категорию «${ctx.name}» и все ${ctx.count} вопрос(ов)?\n\nЭто действие необратимо!`
-      )) return;
-      const res = await apiDelete(`/api/categories/${ctx.id}?mode=delete`);
-      await loadQuestions();
-      await refreshCategories();
-      renderAdminQuestionsList();
       closeDeleteCategoryModal();
-      alert(`✅ Категория удалена вместе с ${res.deleted_questions} вопрос(ами).`);
+      openDangerConfirm(
+        `Категория «${ctx.name}» и все ${ctx.count} вопрос(ов) внутри неё будут удалены безвозвратно.`,
+        async () => {
+          try {
+            const res = await apiDelete(`/api/categories/${ctx.id}?mode=delete`);
+            await loadQuestions();
+            await refreshCategories();
+            renderAdminQuestionsList();
+            toast(`✅ Категория удалена вместе с ${res.deleted_questions} вопрос(ами)`);
+          } catch (e) {
+            toast(`Ошибка: ${e.message}`, 'error');
+          }
+        }
+      );
     }
   } catch (e) {
-    alert(`Ошибка: ${e.message}`);
+    toast(`Ошибка: ${e.message}`, 'error');
   }
 }
 
@@ -2933,11 +3309,719 @@ function exitCompetition() {
   updateUI();
 }
 
-// Close modals on backdrop click
+// Close modals on backdrop click (bird modals have their own lifecycle)
 document.querySelectorAll('.modal').forEach(modal => {
   modal.addEventListener('click', (e) => {
-    if (e.target === modal) {
-      modal.style.display = 'none';
-    }
+    if (e.target !== modal) return;
+    if (['bird-question-modal', 'bird-ad-modal'].includes(modal.id)) return;
+    modal.style.display = 'none';
   });
 });
+
+// ============================================================
+// FLIPPY BIRD — fly through 4–11 obstacles, then answer a DB question
+// ============================================================
+const BIRD = {
+  canvas: null,
+  ctx: null,
+  W: 360,
+  H: 520,
+  ground: 64,
+  raf: null,
+  lastTs: 0,
+  state: null,
+  status: null,
+  question: null,
+  qTimer: null,
+  qAnswered: true,
+  qTotal: 15,
+  qDeadline: 0,
+  qResolveTimer: null,
+  adTimer: null,
+  adLeft: 0,
+};
+
+const BIRD_PIPE_W = 58;
+const BIRD_BIRD_X = 0.3;
+const BIRD_MAX_LIVES = 3;
+
+function birdRand(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function birdStatusDefaults() {
+  const limit = parseInt(appSettings.free_bird_games, 10) || 3;
+  return {
+    limit,
+    games_left: limit,
+    bonus_games: 0,
+    total_games_left: limit,
+    unlimited: !!state.user.isAdmin,
+    is_pro: false,
+    ad_rewards_left: parseInt(appSettings.bird_ad_reward_max, 10) || 5,
+    ad_reward_max: parseInt(appSettings.bird_ad_reward_max, 10) || 5,
+    ad_duration: parseInt(appSettings.bird_ad_duration, 10) || 5,
+    obstacles_min: parseInt(appSettings.bird_obstacles_min, 10) || 4,
+    obstacles_max: parseInt(appSettings.bird_obstacles_max, 10) || 11,
+    question_seconds: parseInt(appSettings.bird_question_seconds, 10) || 15,
+  };
+}
+
+async function refreshBirdStatus() {
+  try {
+    BIRD.status = await apiGet('/api/bird/status');
+  } catch (e) {
+    if (!BIRD.status) BIRD.status = birdStatusDefaults();
+  }
+  renderBirdStatus();
+}
+
+function renderBirdStatus() {
+  const s = BIRD.status || birdStatusDefaults();
+  const quota = document.getElementById('bird-quota');
+  if (quota) {
+    if (s.unlimited) {
+      quota.textContent = '👑 Без лимитов';
+    } else {
+      const left = Math.max(0, s.total_games_left ?? 0);
+      quota.textContent = left > 0
+        ? `Осталось игр сегодня: ${left}${s.bonus_games ? ` (в т.ч. ${s.bonus_games} за рекламу)` : ''}`
+        : 'На сегодня игры закончились';
+    }
+  }
+
+  const showAd = !s.unlimited && (s.ad_rewards_left ?? 0) > 0;
+  const adBtn = document.getElementById('bird-ad-btn');
+  if (adBtn) adBtn.style.display = showAd ? '' : 'none';
+  const overAd = document.getElementById('bird-over-ad-btn');
+  if (overAd) overAd.style.display = showAd ? '' : 'none';
+}
+
+function setGameMode(mode) {
+  const isBird = mode === 'bird';
+  document.getElementById('bird-mode').style.display = isBird ? '' : 'none';
+  document.getElementById('sprint-mode').style.display = isBird ? 'none' : '';
+  document.getElementById('game-mode-bird-btn').classList.toggle('active', isBird);
+  document.getElementById('game-mode-sprint-btn').classList.toggle('active', !isBird);
+
+  if (isBird) {
+    resizeBirdCanvas();
+    if (!BIRD.state?.running) birdShowStart();
+    else drawBirdFrame();
+    refreshBirdStatus();
+  } else {
+    birdPause(true);
+  }
+}
+
+function birdShowStart() {
+  const start = document.getElementById('bird-start-overlay');
+  if (start) start.style.display = 'flex';
+  const over = document.getElementById('bird-over-overlay');
+  if (over) over.style.display = 'none';
+  resizeBirdCanvas();
+  drawBirdFrame();
+}
+
+function resizeBirdCanvas() {
+  const stage = document.getElementById('bird-stage');
+  if (!stage) return;
+  BIRD.canvas = BIRD.canvas || document.getElementById('bird-canvas');
+  if (!BIRD.canvas) return;
+  BIRD.ctx = BIRD.ctx || BIRD.canvas.getContext('2d');
+
+  const rect = stage.getBoundingClientRect();
+  const w = Math.max(280, Math.round(rect.width || 360));
+  const h = Math.max(360, Math.round(rect.height || 520));
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+  if (BIRD.canvas.width !== Math.round(w * dpr) || BIRD.canvas.height !== Math.round(h * dpr)) {
+    BIRD.canvas.width = Math.round(w * dpr);
+    BIRD.canvas.height = Math.round(h * dpr);
+    BIRD.canvas.style.width = `${w}px`;
+    BIRD.canvas.style.height = `${h}px`;
+    BIRD.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  BIRD.W = w;
+  BIRD.H = h;
+}
+
+function birdTarget() {
+  const s = BIRD.status || birdStatusDefaults();
+  const min = Math.max(1, parseInt(s.obstacles_min, 10) || 4);
+  const max = Math.max(min, parseInt(s.obstacles_max, 10) || 11);
+  return birdRand(min, max);
+}
+
+async function startBirdGame() {
+  if (BIRD.state?.running) return;
+  if (!questionsData?.questions?.length) {
+    toast('В базе пока нет вопросов', 'error');
+    return;
+  }
+
+  closeBirdLimitModal();
+  try {
+    BIRD.status = await apiPost('/api/bird/start', {});
+    renderBirdStatus();
+    birdBegin();
+  } catch (e) {
+    if (e.status === 402) {
+      BIRD.status = { ...(BIRD.status || birdStatusDefaults()), ...(e.data || {}) };
+      openBirdLimitModal();
+      return;
+    }
+    if (IS_LOCAL_DEV) {
+      birdBegin();
+    } else {
+      toast(e.message || 'Не удалось начать игру', 'error');
+    }
+  }
+}
+
+function birdBegin() {
+  document.getElementById('bird-start-overlay').style.display = 'none';
+  document.getElementById('bird-over-overlay').style.display = 'none';
+  closeBirdQuestion();
+  resizeBirdCanvas();
+
+  BIRD.state = {
+    y: BIRD.H * 0.45,
+    vy: 0,
+    lives: BIRD_MAX_LIVES,
+    score: 0,
+    roundPassed: 0,
+    passedTotal: 0,
+    correct: 0,
+    target: birdTarget(),
+    pipes: [],
+    usedQuestions: new Set(),
+    running: true,
+    paused: false,
+    tabPaused: false,
+    answering: false,
+    invulnUntil: 0,
+    flashUntil: 0,
+  };
+
+  updateBirdHud();
+  cancelAnimationFrame(BIRD.raf);
+  BIRD.lastTs = performance.now();
+  BIRD.raf = requestAnimationFrame(birdLoop);
+  birdHaptic('light');
+}
+
+function birdLoop(ts) {
+  const st = BIRD.state;
+  if (!st || !st.running) return;
+  const dt = Math.min(0.034, Math.max(0.001, (ts - BIRD.lastTs) / 1000));
+  BIRD.lastTs = ts;
+  if (!st.paused && !st.tabPaused) birdUpdate(dt);
+  birdDraw();
+  BIRD.raf = requestAnimationFrame(birdLoop);
+}
+
+function birdPause(paused) {
+  if (!BIRD.state) return;
+  BIRD.state.tabPaused = !!paused;
+  if (!paused) BIRD.lastTs = performance.now();
+}
+
+function birdUpdate(dt) {
+  const st = BIRD.state;
+  const groundY = BIRD.H - BIRD.ground;
+  const bx = BIRD.W * BIRD_BIRD_X;
+
+  st.vy += 1420 * dt;
+  st.y += st.vy * dt;
+  if (st.y < 16) {
+    st.y = 16;
+    st.vy = 0;
+  }
+
+  const spacing = Math.max(190, BIRD.W * 0.56);
+  st.pipes.forEach(p => { p.x -= 165 * dt; });
+
+  const last = st.pipes[st.pipes.length - 1];
+  if (!last || last.x < BIRD.W - spacing) {
+    const gap = Math.max(130, BIRD.H * 0.3);
+    const gapY = birdRand(58, Math.max(70, Math.round(groundY - gap - 58)));
+    st.pipes.push({ x: BIRD.W + 24, gapY, gapH: gap, passed: false });
+  }
+
+  st.pipes = st.pipes.filter(p => p.x + BIRD_PIPE_W > -10);
+
+  for (const p of st.pipes) {
+    if (!p.passed && p.x + BIRD_PIPE_W < bx) {
+      p.passed = true;
+      st.roundPassed += 1;
+      st.passedTotal += 1;
+      st.score += 10;
+      updateBirdHud();
+      birdHaptic('light');
+      if (st.roundPassed >= st.target) birdTriggerQuestion();
+    }
+  }
+
+  if (st.invulnUntil > performance.now()) return;
+
+  for (const p of st.pipes) {
+    const overlaps = bx + 14 > p.x && bx - 14 < p.x + BIRD_PIPE_W;
+    if (!overlaps) continue;
+    if (st.y - 14 < p.gapY || st.y + 14 > p.gapY + p.gapH) {
+      birdHit();
+      return;
+    }
+  }
+
+  if (st.y + 14 >= groundY) birdHit();
+}
+
+function birdHit() {
+  const st = BIRD.state;
+  if (!st || !st.running) return;
+  const now = performance.now();
+  if (st.invulnUntil > now) return;
+
+  st.lives -= 1;
+  st.flashUntil = now + 420;
+  birdHaptic('heavy');
+  updateBirdHud();
+
+  if (st.lives <= 0) {
+    birdGameOver();
+    return;
+  }
+
+  st.invulnUntil = now + 1500;
+  st.y = BIRD.H * 0.42;
+  st.vy = 0;
+  st.pipes = [];
+  st.roundPassed = 0;
+  st.target = birdTarget();
+  st.paused = true;
+
+  setTimeout(() => {
+    if (BIRD.state?.running && !BIRD.state.answering) {
+      BIRD.state.paused = false;
+      BIRD.lastTs = performance.now();
+    }
+  }, 800);
+}
+
+function birdFlap() {
+  const st = BIRD.state;
+  if (!st || !st.running || st.paused || st.tabPaused) return;
+  st.vy = -440;
+  birdHaptic('light');
+}
+
+function birdTriggerQuestion() {
+  const st = BIRD.state;
+  if (!st || st.answering) return;
+  st.answering = true;
+  st.paused = true;
+  setTimeout(showBirdQuestion, 320);
+}
+
+function pickBirdQuestion() {
+  const pool = (questionsData?.questions || []).filter(q =>
+    Array.isArray(q.options) && q.options.length >= 2 &&
+    Array.isArray(q.correct_options) && q.correct_options.length > 0
+  );
+  if (!pool.length) return null;
+
+  const st = BIRD.state;
+  let list = pool.filter(q => !st.usedQuestions.has(q.id));
+  if (!list.length) {
+    st.usedQuestions.clear();
+    list = pool;
+  }
+  const q = list[birdRand(0, list.length - 1)];
+  st.usedQuestions.add(q.id);
+  return q;
+}
+
+function showBirdQuestion() {
+  const st = BIRD.state;
+  if (!st || !st.running) return;
+  const q = pickBirdQuestion();
+  if (!q) {
+    birdResumeRound();
+    return;
+  }
+
+  BIRD.question = q;
+  BIRD.qAnswered = false;
+  BIRD.qTotal = Math.max(5, parseInt((BIRD.status || {}).question_seconds, 10) || 15);
+  BIRD.qDeadline = Date.now() + BIRD.qTotal * 1000;
+
+  document.getElementById('bird-q-text').textContent = q.question || 'Вопрос';
+  document.getElementById('bird-q-feedback').textContent = '';
+  document.getElementById('bird-q-feedback').className = 'bird-q-feedback';
+  document.getElementById('bird-q-lives').textContent = '❤️'.repeat(Math.max(0, st.lives));
+  document.getElementById('bird-q-options').innerHTML = q.options.map((opt, idx) =>
+    `<button class="bird-q-option" onclick="birdAnswer(${idx})">${escapeHtml(opt)}</button>`
+  ).join('');
+
+  document.getElementById('bird-question-modal').style.display = 'flex';
+  birdTickQuestion();
+  clearInterval(BIRD.qTimer);
+  BIRD.qTimer = setInterval(birdTickQuestion, 100);
+  birdHaptic('light');
+}
+
+function birdTickQuestion() {
+  const leftMs = Math.max(0, BIRD.qDeadline - Date.now());
+  const left = Math.ceil(leftMs / 1000);
+  const timerEl = document.getElementById('bird-q-timer');
+  timerEl.textContent = String(left);
+  timerEl.classList.toggle('warning', left <= 5);
+  document.getElementById('bird-q-progress-fill').style.width =
+    `${Math.max(0, Math.min(100, (leftMs / (BIRD.qTotal * 1000)) * 100))}%`;
+  if (leftMs <= 0) resolveBirdAnswer(-1);
+}
+
+function birdAnswer(index) {
+  resolveBirdAnswer(index);
+}
+
+function resolveBirdAnswer(index) {
+  if (BIRD.qAnswered) return;
+  BIRD.qAnswered = true;
+  clearInterval(BIRD.qTimer);
+
+  const st = BIRD.state;
+  const q = BIRD.question;
+  if (!st || !q) return;
+  const isCorrect = index >= 0 && q.correct_options.includes(index);
+
+  document.querySelectorAll('#bird-q-options .bird-q-option').forEach((btn, i) => {
+    btn.classList.add('disabled');
+    btn.style.pointerEvents = 'none';
+    if (q.correct_options.includes(i)) btn.classList.add('correct');
+    else if (i === index) btn.classList.add('wrong');
+  });
+
+  try { submitAnswerToServer(q.id, index >= 0 ? [index] : []); } catch (e) { /* analytics */ }
+
+  const feedback = document.getElementById('bird-q-feedback');
+  const correctText = q.options[q.correct_options[0]] || '—';
+  if (isCorrect) {
+    st.correct += 1;
+    st.score += 100;
+    feedback.textContent = `✅ Верно! +100 очков${q.explanation ? ` — ${q.explanation}` : ''}`;
+    feedback.className = 'bird-q-feedback is-correct';
+    birdHaptic('success');
+  } else {
+    st.lives -= 1;
+    feedback.textContent = index < 0
+      ? `⏰ Время вышло. Правильный ответ: ${correctText}`
+      : `❌ Неверно. Правильный ответ: ${correctText}`;
+    feedback.className = 'bird-q-feedback is-wrong';
+    birdHaptic('heavy');
+  }
+
+  document.getElementById('bird-q-lives').textContent = '❤️'.repeat(Math.max(0, st.lives));
+  updateBirdHud();
+
+  clearTimeout(BIRD.qResolveTimer);
+  BIRD.qResolveTimer = setTimeout(() => {
+    document.getElementById('bird-question-modal').style.display = 'none';
+    if (!st.running) return;
+    st.answering = false;
+
+    if (isCorrect) {
+      birdResumeRound();
+    } else if (st.lives <= 0) {
+      birdGameOver();
+    } else {
+      st.pipes = [];
+      st.roundPassed = 0;
+      st.target = birdTarget();
+      st.paused = true;
+      setTimeout(() => {
+        if (BIRD.state?.running) {
+          BIRD.state.paused = false;
+          BIRD.lastTs = performance.now();
+        }
+      }, 700);
+    }
+  }, 1600);
+}
+
+function birdResumeRound() {
+  const st = BIRD.state;
+  if (!st || !st.running) return;
+  st.answering = false;
+  st.paused = false;
+  st.roundPassed = 0;
+  st.target = birdTarget();
+  st.pipes = [];
+  BIRD.lastTs = performance.now();
+  updateBirdHud();
+}
+
+function closeBirdQuestion() {
+  clearInterval(BIRD.qTimer);
+  clearTimeout(BIRD.qResolveTimer);
+  const modal = document.getElementById('bird-question-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function birdGameOver() {
+  const st = BIRD.state;
+  if (!st) return;
+  st.running = false;
+  st.paused = true;
+  st.answering = false;
+  cancelAnimationFrame(BIRD.raf);
+  closeBirdQuestion();
+
+  document.getElementById('bird-start-overlay').style.display = 'none';
+  document.getElementById('bird-final-pipes').textContent = st.passedTotal;
+  document.getElementById('bird-final-correct').textContent = st.correct;
+  document.getElementById('bird-final-score').textContent = st.score;
+
+  let best = Math.max(st.score, state.stats.gameHighScore || 0);
+  document.getElementById('bird-final-best').textContent = best;
+  document.getElementById('bird-over-overlay').style.display = 'flex';
+
+  try {
+    const res = await apiPost('/api/bird/finish', {
+      score: st.score,
+      pipes: st.passedTotal,
+      correct: st.correct,
+    });
+    best = res.high_score ?? best;
+    document.getElementById('bird-final-best').textContent = best;
+    state.stats.gameHighScore = best;
+  } catch (e) {
+    state.stats.gameHighScore = best;
+  }
+  refreshBirdStatus();
+}
+
+function closeBirdGame() {
+  if (BIRD.state) BIRD.state.running = false;
+  cancelAnimationFrame(BIRD.raf);
+  closeBirdQuestion();
+  BIRD.state = null;
+  birdShowStart();
+  updateBirdHud();
+  refreshBirdStatus();
+}
+
+function updateBirdHud() {
+  const st = BIRD.state;
+  const lives = st ? st.lives : BIRD_MAX_LIVES;
+  const livesEl = document.getElementById('bird-lives');
+  if (livesEl) {
+    livesEl.textContent = '❤️'.repeat(Math.max(0, lives)) + '🖤'.repeat(Math.max(0, BIRD_MAX_LIVES - lives));
+  }
+  const target = st ? st.target : 0;
+  const textEl = document.getElementById('bird-progress-text');
+  if (textEl) textEl.textContent = st ? `${st.roundPassed} / ${target}` : '—';
+  const fill = document.getElementById('bird-progress-fill');
+  if (fill) fill.style.width = st && target ? `${Math.min(100, (st.roundPassed / target) * 100)}%` : '0%';
+  const scoreEl = document.getElementById('bird-score');
+  if (scoreEl) scoreEl.textContent = st ? st.score : 0;
+}
+
+function birdRoundRect(ctx, x, y, w, h, r) {
+  const radius = Math.min(r, w / 2, Math.max(0, h / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function birdDraw() {
+  if (!BIRD.ctx) return;
+  const ctx = BIRD.ctx;
+  const W = BIRD.W;
+  const H = BIRD.H;
+  const st = BIRD.state;
+  const groundY = H - BIRD.ground;
+
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, '#6ec9ff');
+  sky.addColorStop(0.7, '#bdeaff');
+  sky.addColorStop(1, '#e8f7ff');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  [[0.18, 0.16, 24], [0.62, 0.1, 18], [0.82, 0.28, 16]].forEach(([x, y, r]) => {
+    ctx.beginPath();
+    ctx.arc(W * x, H * y, r, 0, Math.PI * 2);
+    ctx.arc(W * x + r, H * y + 4, r * 0.8, 0, Math.PI * 2);
+    ctx.arc(W * x - r, H * y + 5, r * 0.7, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  if (st) {
+    for (const p of st.pipes) {
+      const grad = ctx.createLinearGradient(p.x, 0, p.x + BIRD_PIPE_W, 0);
+      grad.addColorStop(0, '#2f9e44');
+      grad.addColorStop(0.5, '#51cf66');
+      grad.addColorStop(1, '#2b8a3e');
+      ctx.fillStyle = grad;
+      birdRoundRect(ctx, p.x, 0, BIRD_PIPE_W, p.gapY, 8);
+      birdRoundRect(ctx, p.x, p.gapY + p.gapH, BIRD_PIPE_W, groundY - (p.gapY + p.gapH), 8);
+      ctx.fillStyle = 'rgba(255,255,255,0.22)';
+      ctx.fillRect(p.x + 8, 0, 6, p.gapY);
+      ctx.fillRect(p.x + 8, p.gapY + p.gapH, 6, groundY - (p.gapY + p.gapH));
+    }
+  }
+
+  ctx.fillStyle = '#d9c07a';
+  ctx.fillRect(0, groundY, W, BIRD.ground);
+  ctx.fillStyle = '#c4a95f';
+  ctx.fillRect(0, groundY, W, 12);
+
+  const bx = W * BIRD_BIRD_X;
+  const by = st ? st.y : H * 0.46;
+  const bob = st ? 0 : Math.sin(performance.now() / 450) * 6;
+  const blink = st && st.invulnUntil > performance.now() && Math.floor(performance.now() / 120) % 2 === 0;
+
+  if (!blink) {
+    ctx.save();
+    ctx.translate(bx, by + bob);
+    ctx.rotate(st ? Math.max(-0.5, Math.min(1.0, st.vy / 900)) : 0);
+    ctx.font = '30px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🐤', 0, 0);
+    ctx.restore();
+  }
+
+  if (st && st.flashUntil > performance.now()) {
+    ctx.fillStyle = 'rgba(255,60,60,0.25)';
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
+function drawBirdFrame() {
+  if (!BIRD.ctx) resizeBirdCanvas();
+  if (BIRD.ctx) birdDraw();
+}
+
+function birdHaptic(type) {
+  const hf = window.Telegram?.WebApp?.HapticFeedback;
+  if (!hf) return;
+  try {
+    if (type === 'heavy') hf.impactOccurred('heavy');
+    else if (type === 'success') hf.notificationOccurred('success');
+    else hf.impactOccurred('light');
+  } catch (e) { /* ignore */ }
+}
+
+function openBirdLimitModal() {
+  const s = BIRD.status || birdStatusDefaults();
+  const text = document.getElementById('bird-limit-text');
+  if (text) {
+    text.textContent = s.unlimited
+      ? 'Лимитов нет.'
+      : `Бесплатный тариф: ${s.limit || 3} игры в день. Сегодня использовано: ${s.played_today || 0}. Бонусных игр: ${s.bonus_games || 0}.`;
+  }
+  const adBtn = document.getElementById('bird-limit-ad-btn');
+  if (adBtn) {
+    const left = s.ad_rewards_left ?? 0;
+    adBtn.style.display = left > 0 ? '' : 'none';
+    adBtn.textContent = `🎬 Смотреть рекламу +1 игра (${left})`;
+  }
+  document.getElementById('bird-limit-modal').style.display = 'flex';
+}
+
+function closeBirdLimitModal() {
+  document.getElementById('bird-limit-modal').style.display = 'none';
+}
+
+function watchBirdRewardAd() {
+  const s = BIRD.status;
+  if (s && !s.unlimited && (s.ad_rewards_left ?? 0) <= 0) {
+    toast('Бонусные игры на сегодня закончились', 'error');
+    return;
+  }
+
+  closeBirdLimitModal();
+  BIRD.adLeft = Math.max(3, parseInt((BIRD.status || {}).ad_duration, 10) || 5);
+  const modal = document.getElementById('bird-ad-modal');
+  const btn = document.getElementById('bird-ad-claim-btn');
+  modal.style.display = 'flex';
+  btn.disabled = true;
+  btn.textContent = `Подождите ${BIRD.adLeft}…`;
+
+  clearInterval(BIRD.adTimer);
+  BIRD.adTimer = setInterval(() => {
+    BIRD.adLeft -= 1;
+    if (BIRD.adLeft <= 0) {
+      clearInterval(BIRD.adTimer);
+      btn.disabled = false;
+      btn.textContent = '✅ Получить +1 игру';
+    } else {
+      btn.textContent = `Подождите ${BIRD.adLeft}…`;
+    }
+  }, 1000);
+}
+
+async function claimBirdReward() {
+  const btn = document.getElementById('bird-ad-claim-btn');
+  btn.disabled = true;
+  try {
+    BIRD.status = await apiPost('/api/bird/reward', {});
+    clearInterval(BIRD.adTimer);
+    document.getElementById('bird-ad-modal').style.display = 'none';
+    renderBirdStatus();
+    toast('🎬 +1 игра за просмотр рекламы');
+    startBirdGame();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = 'Повторить';
+    if (e.status === 429) {
+      BIRD.status = { ...(BIRD.status || birdStatusDefaults()), ...(e.data || {}) };
+      renderBirdStatus();
+      document.getElementById('bird-ad-modal').style.display = 'none';
+      toast('Лимит бонусных игр на сегодня', 'error');
+    } else {
+      toast(e.message || 'Не удалось получить награду', 'error');
+    }
+  }
+}
+
+// Flap on tap / space
+ document.getElementById('bird-stage')?.addEventListener('pointerdown', (e) => {
+  if (e.target.closest('.bird-overlay')) return;
+  e.preventDefault();
+  birdFlap();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== ' ' && e.code !== 'Space') return;
+  const gameTab = document.getElementById('tab-game');
+  const birdVisible = document.getElementById('bird-mode')?.style.display !== 'none';
+  const questionOpen = document.getElementById('bird-question-modal')?.style.display !== 'none';
+  const tag = (e.target.tagName || '').toLowerCase();
+  if (gameTab?.classList.contains('active') && birdVisible && !questionOpen &&
+      !['input', 'textarea', 'select', 'button'].includes(tag)) {
+    e.preventDefault();
+    birdFlap();
+  }
+});
+
+window.addEventListener('resize', () => {
+  if (document.getElementById('bird-mode')?.style.display === 'none') return;
+  resizeBirdCanvas();
+  if (!BIRD.state?.running) drawBirdFrame();
+});
+
+// Idle scene before the first game
+setTimeout(() => {
+  resizeBirdCanvas();
+  drawBirdFrame();
+}, 600);
