@@ -217,6 +217,7 @@
             <div class="bird-progress-bar"><div class="bird-progress-fill" id="bird-progress-fill"></div></div>
           </div>
           <div class="bird-hud-score">🏆 <span id="bird-score">0</span></div>
+          <button class="bird-finish-btn" id="bird-finish-btn" style="display:none;" onclick="finishBirdRun()" title="Завершить забег">🏁</button>
         </div>
 
         <div class="bird-stage" id="bird-stage">
@@ -225,7 +226,7 @@
           <div class="bird-overlay" id="bird-start-overlay">
             <div class="bird-overlay-emoji">🐤</div>
             <h3>Flippy Bird</h3>
-            <p>Пролети от 4 до 11 препятствий, затем ответь на вопрос из базы. 3 жизни: столкновение, неверный ответ или истёкшее время забирают одну.</p>
+            <p id="bird-rules-text">Пролети от 4 до 11 препятствий, затем ответь на вопрос из базы. 3 жизни: столкновение, неверный ответ или истёкшее время забирают одну.</p>
             <div class="bird-quota" id="bird-quota">Проверяем доступ…</div>
             <button class="btn btn-primary btn-large" id="bird-start-btn" onclick="startBirdGame()">▶ Играть</button>
             <button class="bird-ad-btn" id="bird-ad-btn" style="display:none;" onclick="watchBirdRewardAd()">🎬 Смотреть рекламу +1 игра</button>
@@ -902,6 +903,19 @@
       <button class="btn btn-secondary" onclick="showPaymentModal();closeBirdLimitModal()">💎 Pro — без лимитов</button>
       <button class="btn btn-secondary" onclick="closeBirdLimitModal()">Позже</button>
       <p class="bird-ad-note">Реклама пока в демо-режиме: место под rewarded-видео готово, доход появится после подключения рекламной сети.</p>
+    </div>
+  </div>
+
+  <!-- Flippy Bird: lives are over — rewarded revive (free plan) -->
+  <div id="bird-revive-modal" class="modal" style="display:none;">
+    <div class="modal-content bird-limit-card">
+      <div class="bird-limit-icon">💔</div>
+      <h3>Жизни закончились</h3>
+      <p id="bird-revive-text">Посмотри короткую рекламу и продолжи забег с 1 жизнью. Очки сохранятся.</p>
+      <button class="btn btn-primary" id="bird-revive-ad-btn" onclick="watchBirdRewardAd('revive')">🎬 Смотреть рекламу и продолжить</button>
+      <button class="btn btn-secondary" id="bird-revive-pro-btn" onclick="showPaymentModal();closeBirdReviveModal()">💎 Pro — без рекламы и лимитов</button>
+      <button class="btn btn-secondary" onclick="closeBirdReviveModal()">Завершить игру</button>
+      <p class="bird-ad-note">Один просмотр = продолжение с 1 жизнью. Бонусные просмотры ограничены настройкой рекламы.</p>
     </div>
   </div>
 

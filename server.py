@@ -1241,6 +1241,8 @@ def _bird_payload(user, stats):
         'total_games_left': (999 if unlimited else max(0, limit - played) + bonus),
         'is_pro': is_pro(user),
         'unlimited': unlimited,
+        'unlimited_lives': unlimited,
+        'revive_available': (not unlimited) and (ad_unlimited or (stats.bird_rewards_today or 0) < ad_max),
         'ad_rewards_left': None if ad_unlimited else max(0, ad_max - (stats.bird_rewards_today or 0)),
         'ad_reward_max': ad_max,
         'ad_reward_unlimited': ad_unlimited,
@@ -1325,6 +1327,44 @@ def bird_reward():
     stats.bird_bonus_games = (stats.bird_bonus_games or 0) + 1
     db.session.commit()
     logger.info(f'Bird ad reward: user={user.tg_id} bonus={stats.bird_bonus_games}')
+    payload = _bird_payload(user, stats)
+    payload['allowed'] = True
+    return jsonify(payload)
+
+
+@app.route('/api/bird/revive', methods=['POST'])
+@require_auth
+def bird_revive():
+    """Consume one rewarded ad to continue the current run with 1 life.
+
+    Unlike /api/bird/reward this does not add a bonus game: the client keeps
+    the same run (score and pipes) and only restores a life.
+    """
+    user = _bird_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    stats = _bird_stats(user)
+    _bird_reset_daily(stats)
+
+    # Pro/owner do not watch ads at all.
+    if is_pro(user) or user.is_admin:
+        db.session.commit()
+        payload = _bird_payload(user, stats)
+        payload['allowed'] = True
+        payload['reason'] = 'unlimited'
+        return jsonify(payload)
+
+    ad_max = _bird_int_setting('bird_ad_reward_max', 5)
+    if ad_max > 0 and (stats.bird_rewards_today or 0) >= ad_max:
+        db.session.commit()
+        payload = _bird_payload(user, stats)
+        payload['allowed'] = False
+        payload['reason'] = 'reward_limit'
+        return jsonify(payload), 429
+
+    stats.bird_rewards_today = (stats.bird_rewards_today or 0) + 1
+    db.session.commit()
+    logger.info(f'Bird ad revive: user={user.tg_id} rewards={stats.bird_rewards_today}')
     payload = _bird_payload(user, stats)
     payload['allowed'] = True
     return jsonify(payload)

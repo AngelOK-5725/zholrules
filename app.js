@@ -3427,6 +3427,7 @@ const BIRD = {
   qRemainingMs: 0,
   qRunning: false,
   qLastTick: 0,
+  adAction: 'game',
 };
 
 const BIRD_PIPE_W = 58;
@@ -3451,6 +3452,7 @@ function birdStatusDefaults() {
     ad_rewards_left: adMax <= 0 ? null : adMax,
     ad_reward_max: adMax,
     ad_reward_unlimited: adMax <= 0,
+    revive_available: !state.user.isAdmin,
     ad_duration: parseInt(appSettings.bird_ad_duration, 10) || 5,
     obstacles_min: parseInt(appSettings.bird_obstacles_min, 10) || 4,
     obstacles_max: parseInt(appSettings.bird_obstacles_max, 10) || 11,
@@ -3493,6 +3495,16 @@ function renderBirdStatus() {
   if (overAd) {
     overAd.style.display = showAd ? '' : 'none';
     overAd.textContent = `🎬 Реклама +1 игра${adUnlimited ? '' : ` (${adLeft})`}`;
+  }
+
+  const finishBtn = document.getElementById('bird-finish-btn');
+  if (finishBtn) finishBtn.style.display = s.unlimited ? '' : 'none';
+
+  const rules = document.getElementById('bird-rules-text');
+  if (rules) {
+    rules.textContent = s.unlimited
+      ? '👑 Pro: без рекламы, дневных лимитов и с бесконечными жизнями. Столкновения и ошибки не завершают забег — нажми 🏁, когда захочешь закончить.'
+      : 'Пролети от 4 до 11 препятствий, затем ответь на вопрос из базы. 3 жизни: столкновение, неверный ответ или истёкшее время забирают одну. Когда жизни закончатся, можно посмотреть рекламу и продолжить.';
   }
 }
 
@@ -3627,6 +3639,7 @@ function birdBegin() {
     answering: false,
     invulnUntil: 0,
     flashUntil: 0,
+    finished: false,
   };
 
   updateBirdHud();
@@ -3644,6 +3657,14 @@ function birdLoop(ts, runId) {
   if (!st.paused && !st.tabPaused) birdUpdate(dt);
   birdDraw();
   BIRD.raf = requestAnimationFrame(t => birdLoop(t, runId));
+}
+
+function birdStartLoop() {
+  cancelAnimationFrame(BIRD.raf);
+  BIRD.runId = (BIRD.runId || 0) + 1;
+  const runId = BIRD.runId;
+  BIRD.lastTs = performance.now();
+  BIRD.raf = requestAnimationFrame(ts => birdLoop(ts, runId));
 }
 
 function birdPause(paused) {
@@ -3708,19 +3729,24 @@ function birdHit() {
   const now = performance.now();
   if (st.invulnUntil > now) return;
 
-  st.lives -= 1;
+  const unlimited = !!BIRD.status?.unlimited;
+  if (!unlimited) st.lives -= 1;
   st.flashUntil = now + 420;
   birdHaptic('heavy');
   updateBirdHud();
 
-  if (st.lives <= 0) {
+  if (!unlimited && st.lives <= 0) {
     birdGameOver();
     return;
   }
 
-  st.invulnUntil = now + 1500;
+  st.invulnUntil = now + (unlimited ? 1200 : 1500);
   st.y = BIRD.H * 0.42;
   st.vy = 0;
+
+  // Pro: lives are unlimited, so a collision only gives a short shield.
+  if (unlimited) return;
+
   st.pipes = [];
   st.roundPassed = 0;
   // Keep the target fixed until the next question; only the progress resets.
@@ -3795,7 +3821,7 @@ function showBirdQuestion() {
 
   document.getElementById('bird-q-feedback').textContent = '';
   document.getElementById('bird-q-feedback').className = 'bird-q-feedback';
-  document.getElementById('bird-q-lives').textContent = '❤️'.repeat(Math.max(0, st.lives));
+  document.getElementById('bird-q-lives').textContent = birdLivesText(st.lives);
   document.getElementById('bird-q-options').innerHTML = q.options.map((opt, idx) => {
     const mediaHtml = optionMediaHtml(q, idx, 'bird');
     return `<div class="bird-q-option${mediaHtml ? ' has-media' : ''}" role="button" tabindex="0" onclick="if (event.target.closest('video,iframe,audio')) return; birdAnswer(${idx})">${mediaHtml}<span>${escapeHtml(opt)}</span></div>`;
@@ -3888,7 +3914,7 @@ function resolveBirdAnswer(index) {
     feedback.className = 'bird-q-feedback is-correct';
     birdHaptic('success');
   } else {
-    st.lives -= 1;
+    if (!BIRD.status?.unlimited) st.lives -= 1;
     feedback.textContent = index < 0
       ? `⏰ Время вышло. Правильный ответ: ${correctText}`
       : `❌ Неверно. Правильный ответ: ${correctText}`;
@@ -3896,7 +3922,7 @@ function resolveBirdAnswer(index) {
     birdHaptic('heavy');
   }
 
-  document.getElementById('bird-q-lives').textContent = '❤️'.repeat(Math.max(0, st.lives));
+  document.getElementById('bird-q-lives').textContent = birdLivesText(st.lives);
   updateBirdHud();
 
   clearTimeout(BIRD.qResolveTimer);
@@ -3907,7 +3933,7 @@ function resolveBirdAnswer(index) {
 
     if (isCorrect) {
       birdResumeRound();
-    } else if (st.lives <= 0) {
+    } else if (!BIRD.status?.unlimited && st.lives <= 0) {
       birdGameOver();
     } else {
       st.pipes = [];
@@ -3950,7 +3976,8 @@ function closeBirdQuestion() {
 
 async function birdGameOver() {
   const st = BIRD.state;
-  if (!st) return;
+  if (!st || st.finished) return;
+  st.finished = true;
   st.running = false;
   st.paused = true;
   st.answering = false;
@@ -3978,7 +4005,12 @@ async function birdGameOver() {
   } catch (e) {
     state.stats.gameHighScore = best;
   }
-  refreshBirdStatus();
+  await refreshBirdStatus();
+
+  // Free plan: offer a rewarded revive right when all lives are spent.
+  if (BIRD.state === st && !BIRD.status?.unlimited && BIRD.status?.revive_available) {
+    openBirdReviveModal();
+  }
 }
 
 function closeBirdGame() {
@@ -3991,13 +4023,18 @@ function closeBirdGame() {
   refreshBirdStatus();
 }
 
+function birdLivesText(lives) {
+  if (BIRD.status?.unlimited) return '👑 ∞';
+  return '❤️'.repeat(Math.max(0, lives)) + '🖤'.repeat(Math.max(0, BIRD_MAX_LIVES - lives));
+}
+
 function updateBirdHud() {
   const st = BIRD.state;
   const lives = st ? st.lives : BIRD_MAX_LIVES;
   const livesEl = document.getElementById('bird-lives');
-  if (livesEl) {
-    livesEl.textContent = '❤️'.repeat(Math.max(0, lives)) + '🖤'.repeat(Math.max(0, BIRD_MAX_LIVES - lives));
-  }
+  if (livesEl) livesEl.textContent = birdLivesText(lives);
+  const finishBtn = document.getElementById('bird-finish-btn');
+  if (finishBtn) finishBtn.style.display = BIRD.status?.unlimited ? '' : 'none';
   const target = st ? st.target : 0;
   const textEl = document.getElementById('bird-progress-text');
   if (textEl) textEl.textContent = st ? `${st.roundPassed} / ${target}` : '—';
@@ -4102,6 +4139,58 @@ function birdHaptic(type) {
   } catch (e) { /* ignore */ }
 }
 
+function openBirdReviveModal() {
+  const s = BIRD.status || birdStatusDefaults();
+  if (s.unlimited) return;
+
+  const canAd = s.revive_available !== false && (s.ad_rewards_left == null || s.ad_rewards_left > 0);
+  const text = document.getElementById('bird-revive-text');
+  if (text) {
+    text.textContent = canAd
+      ? `Посмотри короткую рекламу и продолжи забег с 1 жизнью. Очки сохранятся.${s.ad_rewards_left == null ? '' : ` Осталось просмотров: ${s.ad_rewards_left}.`}`
+      : 'Бесплатные просмотры на сегодня закончились. Оформи Pro, чтобы играть без рекламы и ограничений.';
+  }
+  const adBtn = document.getElementById('bird-revive-ad-btn');
+  if (adBtn) adBtn.style.display = canAd ? '' : 'none';
+  document.getElementById('bird-revive-modal').style.display = 'flex';
+}
+
+function closeBirdReviveModal() {
+  document.getElementById('bird-revive-modal').style.display = 'none';
+}
+
+function birdRevive() {
+  const st = BIRD.state;
+  if (!st) return;
+  st.finished = false;
+  st.running = true;
+  st.paused = false;
+  st.tabPaused = false;
+  st.answering = false;
+  st.lives = 1;
+  st.vy = 0;
+  st.y = BIRD.H * 0.42;
+  st.invulnUntil = performance.now() + 1800;
+  st.flashUntil = 0;
+  st.pipes = [];
+  st.roundPassed = 0;
+  st.target = birdTarget();
+  document.getElementById('bird-over-overlay').style.display = 'none';
+  closeBirdReviveModal();
+  closeBirdQuestion();
+  updateBirdHud();
+  birdStartLoop();
+  birdHaptic('success');
+}
+
+function finishBirdRun() {
+  if (!BIRD.status?.unlimited) return;
+  const st = BIRD.state;
+  if (!st || !st.running) return;
+  st.lives = 0;
+  birdGameOver();
+}
+
 function openBirdLimitModal() {
   const s = BIRD.status || birdStatusDefaults();
   const text = document.getElementById('bird-limit-text');
@@ -4124,7 +4213,8 @@ function closeBirdLimitModal() {
   document.getElementById('bird-limit-modal').style.display = 'none';
 }
 
-function watchBirdRewardAd() {
+function watchBirdRewardAd(action = 'game') {
+  BIRD.adAction = action === 'revive' ? 'revive' : 'game';
   const s = BIRD.status;
   if (s && !s.unlimited && s.ad_rewards_left != null && s.ad_rewards_left <= 0) {
     toast('Бонусные игры на сегодня закончились', 'error');
@@ -4132,6 +4222,7 @@ function watchBirdRewardAd() {
   }
 
   closeBirdLimitModal();
+  if (BIRD.adAction === 'revive') closeBirdReviveModal();
   BIRD.adLeft = Math.max(1, parseInt((BIRD.status || {}).ad_duration, 10) || 5);
   const modal = document.getElementById('bird-ad-modal');
   const btn = document.getElementById('bird-ad-claim-btn');
@@ -4145,7 +4236,7 @@ function watchBirdRewardAd() {
     if (BIRD.adLeft <= 0) {
       clearInterval(BIRD.adTimer);
       btn.disabled = false;
-      btn.textContent = '✅ Получить +1 игру';
+      btn.textContent = BIRD.adAction === 'revive' ? '✅ Продолжить с 1 жизнью' : '✅ Получить +1 игру';
     } else {
       btn.textContent = `Подождите ${BIRD.adLeft}…`;
     }
@@ -4154,22 +4245,34 @@ function watchBirdRewardAd() {
 
 async function claimBirdReward() {
   const btn = document.getElementById('bird-ad-claim-btn');
+  const action = BIRD.adAction || 'game';
   btn.disabled = true;
   try {
-    BIRD.status = await apiPost('/api/bird/reward', {});
+    BIRD.status = await apiPost(
+      action === 'revive' ? '/api/bird/revive' : '/api/bird/reward',
+      {}
+    );
     clearInterval(BIRD.adTimer);
     document.getElementById('bird-ad-modal').style.display = 'none';
     renderBirdStatus();
-    toast('🎬 +1 игра за просмотр рекламы');
-    startBirdGame();
+
+    if (action === 'revive') {
+      toast('🎬 Продолжаем забег с 1 жизнью');
+      birdRevive();
+    } else {
+      toast('🎬 +1 игра за просмотр рекламы');
+      startBirdGame();
+    }
   } catch (e) {
+    const failedAction = action;
     btn.disabled = false;
     btn.textContent = 'Повторить';
     if (e.status === 429) {
       BIRD.status = { ...(BIRD.status || birdStatusDefaults()), ...(e.data || {}) };
       renderBirdStatus();
       document.getElementById('bird-ad-modal').style.display = 'none';
-      toast('Лимит бонусных игр на сегодня', 'error');
+      toast('Лимит бонусных просмотров на сегодня', 'error');
+      if (failedAction === 'revive') openBirdReviveModal();
     } else {
       toast(e.message || 'Не удалось получить награду', 'error');
     }
