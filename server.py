@@ -15,6 +15,7 @@ from functools import wraps
 from datetime import datetime, date, timedelta, timezone
 
 from flask import Flask, request, jsonify, send_file, send_from_directory
+from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
@@ -65,6 +66,67 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///zholrules.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB for media uploads
+
+if app.config['SECRET_KEY'] in ('', 'dev-secret'):
+    logger.warning(
+        'SECRET_KEY is not set — session signatures use a public default. '
+        'Set SECRET_KEY in the environment.'
+    )
+
+
+# ============================================
+# SAFETY HELPERS
+# ============================================
+
+def _redact_url(value: str) -> str:
+    """Hide the password in a connection URL before it reaches a log line.
+
+    Platform logs are readable far beyond this machine, so credentials must
+    never be written there.
+    """
+    try:
+        from urllib.parse import urlsplit, urlunsplit
+        parts = urlsplit(value or '')
+        if not parts.password:
+            return value or ''
+        host = parts.hostname or ''
+        if parts.port:
+            host = f'{host}:{parts.port}'
+        netloc = f'{parts.username}:***@{host}' if parts.username else host
+        return urlunsplit((parts.scheme, netloc, parts.path, '', ''))
+    except Exception:
+        return '<unparsed database url>'
+
+
+def _owner_id() -> int:
+    """Telegram id of the owner, or 0 when the env value is unusable."""
+    raw = (os.getenv('OWNER_TELEGRAM_ID', '') or '').strip()
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _safe_json(raw, default, expect=None):
+    """Parse JSON held in the database without dying on a corrupted row.
+
+    ``expect`` rejects values of the wrong shape (e.g. a string where the app
+    needs a list), so one bad row cannot break a whole listing.
+    """
+    if not raw:
+        return default
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        logger.error(f'Corrupted JSON in database column: {str(raw)[:60]!r}')
+        return default
+    if expect is not None and not isinstance(value, expect):
+        logger.error(
+            f'Unexpected JSON type in database column: {type(value).__name__} '
+            f'(expected {expect.__name__})'
+        )
+        return default
+    return value
 
 # Media uploads: local fallback folder
 MEDIA_FOLDER = os.getenv('MEDIA_FOLDER', 'uploads')
@@ -191,7 +253,7 @@ if not database_url:
     database_url = 'sqlite:///zholrules.db'
     logger.warning('DATABASE_URL not set, using local SQLite')
 else:
-    logger.info(f'Using database: {database_url[:40]}...')
+    logger.info(f'Using database: {_redact_url(database_url)}')
 
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
@@ -546,9 +608,9 @@ class Question(db.Model):
             'media_url': self.media_url,
             'is_media_only': self.is_media_only,
             'multiple_choice': self.multiple_choice,
-            'options': json.loads(self.options),
-            'option_media': json.loads(self.option_media) if self.option_media else {},
-            'correct_options': json.loads(self.correct_options),
+            'options': _safe_json(self.options, [], list),
+            'option_media': _safe_json(self.option_media, {}, dict),
+            'correct_options': _safe_json(self.correct_options, [], list),
             'explanation': self.explanation,
             'difficulty': self.difficulty,
         }
@@ -638,7 +700,7 @@ def require_admin(f):
     """Decorator to require admin privileges."""
     @wraps(f)
     def decorated(*args, **kwargs):
-        owner_id = int(os.getenv('OWNER_TELEGRAM_ID', 0))
+        owner_id = _owner_id()
         tg_id = request.tg_user.get('id', 0)
 
         if tg_id != owner_id:
@@ -770,7 +832,7 @@ def uploaded_media(filename):
 def get_user():
     """Get or create user profile."""
     tg_id = request.tg_user['id']
-    owner_id = int(os.getenv('OWNER_TELEGRAM_ID', 0))
+    owner_id = _owner_id()
     is_admin = (tg_id == owner_id)
 
     logger.info(f'get_user: tg_id={tg_id}, owner_id={owner_id}, is_admin={is_admin}')
@@ -1039,7 +1101,7 @@ def submit_answer():
     if not question:
         return jsonify({'error': 'Question not found'}), 404
 
-    correct = json.loads(question.correct_options)
+    correct = _safe_json(question.correct_options, [], list)
     is_correct = sorted(selected_options) == sorted(correct)
 
     # Update user stats
@@ -1941,7 +2003,7 @@ def create_lives_invoice():
 
     tg_id = request.tg_user['id']
     bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
-    lives_price = int(get_setting('lives_stars_price', str(LIVES_PER_PURCHASE_PRICE)))
+    lives_price = _int_setting('lives_stars_price', LIVES_PER_PURCHASE_PRICE)
 
     if not bot_token:
         # Dev mode: add lives directly
@@ -2338,6 +2400,21 @@ waiting_players = []  # list of {user_id, name, sid}
 active_competitions = {}  # competition_id -> {player1, player2, questions, ...}
 
 
+def _socket_safe(handler):
+    """Never let a malformed socket payload kill the connection handler."""
+    @wraps(handler)
+    def wrapped(*args, **kwargs):
+        try:
+            return handler(*args, **kwargs)
+        except Exception:
+            logger.exception(f'Socket handler failed: {handler.__name__}')
+            try:
+                emit('error', {'message': 'Внутренняя ошибка'})
+            except Exception:
+                pass
+    return wrapped
+
+
 @socketio.on('connect')
 def handle_connect():
     logger.info(f'Client connected: {request.sid}')
@@ -2352,8 +2429,10 @@ def handle_disconnect():
 
 
 @socketio.on('competition_join')
+@_socket_safe
 def handle_competition_join(data):
     """Player joins the matchmaking queue."""
+    data = data or {}
     user_id = data.get('user_id')
     name = data.get('name', 'Аноним')
 
@@ -2446,8 +2525,10 @@ def start_competition_match():
 
 
 @socketio.on('competition_answer')
+@_socket_safe
 def handle_competition_answer(data):
     """Player submits an answer during competition."""
+    data = data or {}
     competition_id = data.get('competition_id')
     user_id = data.get('user_id')
     question_id = data.get('question_id')
@@ -2472,7 +2553,7 @@ def handle_competition_answer(data):
     if not question:
         return
 
-    correct = json.loads(question.correct_options)
+    correct = _safe_json(question.correct_options, [], list)
     is_correct = sorted(selected_options) == sorted(correct)
 
     # Count competition answers into user stats (analytics)
@@ -2598,8 +2679,10 @@ def finish_competition(competition_id):
 
 
 @socketio.on('competition_leave')
+@_socket_safe
 def handle_competition_leave(data):
     """Player leaves the queue or competition."""
+    data = data or {}
     user_id = data.get('user_id')
     competition_id = data.get('competition_id')
 
@@ -2824,10 +2907,84 @@ def admin_set_subscription(user_id):
 
 
 # ============================================
+# ERROR HANDLERS (always answer with JSON, never a stack page)
+# ============================================
+def _json_error(status: int, message: str):
+    response = jsonify({'error': message})
+    response.status_code = status
+    return response
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def _handle_too_large(error):
+    limit = app.config.get('MAX_CONTENT_LENGTH') or 0
+    if limit >= 1024 * 1024:
+        human = f'{limit // (1024 * 1024)} МБ'
+    else:
+        human = f'{limit // 1024} КБ'
+    return _json_error(413, f'Файл слишком большой (максимум {human})')
+
+
+@app.errorhandler(400)
+def _handle_bad_request(error):
+    return _json_error(400, 'Некорректный запрос')
+
+
+@app.errorhandler(403)
+def _handle_forbidden(error):
+    return _json_error(403, 'Доступ запрещён')
+
+
+@app.errorhandler(404)
+def _handle_not_found(error):
+    return _json_error(404, 'Не найдено')
+
+
+@app.errorhandler(405)
+def _handle_method_not_allowed(error):
+    return _json_error(405, 'Метод не поддерживается')
+
+
+@app.errorhandler(415)
+def _handle_unsupported_media(error):
+    return _json_error(415, 'Ожидается JSON в теле запроса')
+
+
+def _rollback_quietly():
+    try:
+        db.session.rollback()
+    except Exception:
+        pass
+
+
+@app.errorhandler(500)
+def _handle_server_error(error):
+    _rollback_quietly()
+    logger.exception('Unhandled error while serving a request')
+    return _json_error(500, 'Внутренняя ошибка сервера')
+
+
+@app.errorhandler(Exception)
+def _handle_unexpected(error):
+    from werkzeug.exceptions import HTTPException
+
+    if isinstance(error, HTTPException):
+        return error
+    _rollback_quietly()
+    logger.exception(f'Unhandled exception: {type(error).__name__}')
+    return _json_error(500, 'Внутренняя ошибка сервера')
+
+
+# ============================================
 # INIT DB ON STARTUP (works with gunicorn too)
 # ============================================
-with app.app_context():
-    init_db()
+try:
+    with app.app_context():
+        init_db()
+except Exception:
+    # A database hiccup at boot must not take the service down: /api/health
+    # keeps answering and the handlers above keep every response JSON.
+    logger.exception('Database initialisation failed — starting in degraded mode')
 
 # ============================================
 # RUN

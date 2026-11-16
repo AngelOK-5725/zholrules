@@ -32,9 +32,10 @@ env/
 
 # --- Environment / Secrets ---
 .env
-.env.local
-.env.*.local
+.env.*
 !.env.example
+*.pem
+*.key
 
 # --- Database ---
 *.db
