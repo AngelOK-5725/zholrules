@@ -4011,3 +4011,183 @@ input[type="date"] {
     font-size: 11px;
   }
 }
+
+/* ============================================
+   GAME MEDIA / TIMER / BACK NAVIGATION
+   ============================================ */
+.game-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 10px;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 999px;
+  background: var(--tg-theme-secondary-bg-color);
+  color: var(--tg-theme-text-color);
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.game-media,
+.bird-q-media {
+  margin: 8px 0 12px;
+}
+
+.game-media:empty,
+.bird-q-media:empty {
+  display: none;
+}
+
+.game-media img,
+.game-media video,
+.game-media iframe,
+.bird-q-media img,
+.bird-q-media video,
+.bird-q-media iframe {
+  display: block;
+  width: 100%;
+  max-height: 210px;
+  border: none;
+  border-radius: 12px;
+  background: #000;
+  object-fit: contain;
+}
+
+.game-media iframe,
+.bird-q-media iframe {
+  aspect-ratio: 16 / 9;
+  height: auto;
+}
+
+.game-option-media,
+.bird-option-media,
+.quiz-option-media,
+.game-option-media video,
+.bird-option-media video {
+  width: 100%;
+}
+
+.game-option-media img,
+.game-option-media video,
+.bird-option-media img,
+.bird-option-media video {
+  display: block;
+  width: 100%;
+  max-height: 110px;
+  border-radius: 9px;
+  object-fit: contain;
+  background: #000;
+}
+
+.bird-q-option.has-media {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+}
+
+.bird-q-feedback.is-video-note {
+  color: var(--tg-theme-hint-color);
+}
+
+.mode-card-game {
+  border-color: rgba(255, 179, 0, 0.35);
+}
+
+/* ============================================
+   ADMIN: MOBILE QUICK COMPOSER
+   ============================================ */
+.admin-advanced {
+  margin: 4px 0 14px;
+  padding: 0;
+  border-radius: 14px;
+  background: var(--tg-theme-secondary-bg-color);
+  overflow: hidden;
+}
+
+.admin-advanced > summary {
+  padding: 12px 14px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--tg-theme-hint-color);
+  cursor: pointer;
+  list-style: none;
+}
+
+.admin-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.admin-advanced[open] > summary {
+  color: var(--primary);
+  border-bottom: 1px solid var(--tg-theme-section-bg-color);
+}
+
+.admin-advanced .form-group {
+  margin: 0;
+  padding: 12px 12px 0;
+}
+
+.admin-advanced .form-group:last-child {
+  padding-bottom: 12px;
+}
+
+.admin-fab {
+  position: fixed;
+  right: 16px;
+  bottom: calc(var(--nav-height) + 18px + env(safe-area-inset-bottom, 0px));
+  z-index: 1200;
+  width: 52px;
+  height: 52px;
+  border: none;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #2563EB, #4F46E5);
+  color: #fff;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 8px 22px rgba(37, 99, 235, 0.42);
+  cursor: pointer;
+}
+
+.admin-fab:active {
+  transform: scale(0.94);
+}
+
+@media (max-width: 600px) {
+  #tab-admin .admin-editor .input-field,
+  #tab-admin .admin-editor select,
+  #tab-admin .admin-editor textarea {
+    font-size: 16px; /* prevents iOS zoom on focus */
+    padding: 12px 13px;
+  }
+
+  #tab-admin .admin-save-bar {
+    bottom: calc(var(--nav-height) + 10px + env(safe-area-inset-bottom, 0px));
+    padding: 9px;
+  }
+
+  #tab-admin .option-row .input-field {
+    font-size: 16px;
+    padding: 10px 11px;
+  }
+
+  #tab-admin .option-media-btn,
+  #tab-admin .option-correct-btn,
+  #tab-admin .option-remove-btn {
+    flex-basis: 40px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .game-media img,
+  .game-media video,
+  .game-media iframe,
+  .bird-q-media img,
+  .bird-q-media video,
+  .bird-q-media iframe {
+    max-height: 170px;
+  }
+}

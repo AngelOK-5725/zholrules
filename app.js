@@ -224,9 +224,10 @@ function renderSubscriptionCard() {
     const warnClass = pct >= 80 ? 'sub-warn' : '';
 
     // Check for discount
-    const proPrice = sub.pro_price || 1500;
+    const proPrice = sub.pro_price || parseInt(appSettings.pro_stars_price, 10) || 1500;
     const discountActive = sub.discount_active;
     const discountPercent = sub.discount_percent || 0;
+    const proAvailable = sub.pro_available !== false && String(appSettings.pro_plan_enabled) !== 'false';
 
     let priceText = `⭐ Купить Pro — ${proPrice} Stars / мес`;
     if (discountActive) {
@@ -240,9 +241,11 @@ function renderSubscriptionCard() {
         <div class="sub-progress-bar">
           <div class="sub-progress-fill" style="width: ${pct}%; background: ${pct >= 80 ? 'var(--red)' : 'var(--primary)'};"></div>
         </div>
-        <button class="btn btn-primary" style="margin-top:12px;width:100%;" onclick="buyProWithStars()">
-          ${priceText}
-        </button>
+        ${proAvailable ? `
+          <button class="btn btn-primary" style="margin-top:12px;width:100%;" onclick="buyProWithStars()">
+            ${priceText}
+          </button>` : `
+          <p class="sub-note" style="margin-top:12px;">Покупка Pro временно недоступна</p>`}
         <p class="sub-note">Без ограничений: тесты, ошибки, экзамен</p>
       </div>
     `;
@@ -258,6 +261,7 @@ async function buyProWithStars() {
         // Step 1: Create invoice link from backend
         const invoiceData = await apiPost('/api/payment/invoice', {});
         const { invoice_url } = invoiceData;
+        const durationDays = invoiceData.duration_days || 30;
 
         // Step 2: Open Telegram payment UI
         tg.openInvoice(invoice_url, (status) => {
@@ -266,7 +270,7 @@ async function buyProWithStars() {
             // Reload subscription data
             fetchUserProfile();
             renderSubscriptionCard();
-            tg.showAlert('Pro подписка активирована! 🎉\n\nДействует 30 дней.');
+            tg.showAlert(`Pro подписка активирована! 🎉\n\nДействует ${durationDays} дней.`);
           } else if (status === 'cancelled') {
             // User cancelled
           } else if (status === 'failed') {
@@ -312,7 +316,10 @@ let appSettings = {
   max_daily_lives: 3,
   free_error_limit: 10,
   pro_stars_price: 1500,
+  pro_duration_days: 30,
   lives_stars_price: 5,
+  free_plan_enabled: 'true',
+  pro_plan_enabled: 'true',
   free_bird_games: 3,
   bird_obstacles_min: 4,
   bird_obstacles_max: 11,
@@ -946,6 +953,9 @@ function switchTab(tabName) {
     loadDashboard();
   }
 
+  // Sprint must not keep counting down after leaving the game tab.
+  if (tabName !== 'game' && typeof stopMiniGame === 'function') stopMiniGame();
+
   // Keep the bird game paused while its tab is not visible
   if (tabName === 'game') {
     if (typeof refreshBirdStatus === 'function') refreshBirdStatus();
@@ -1467,6 +1477,12 @@ function updateTimerDisplay() {
 // MINI GAME: SIGN RUSH
 // ============================================
 function startMiniGame() {
+  if (!questionsData?.questions?.length) {
+    toast('В базе пока нет вопросов', 'error');
+    return;
+  }
+
+  clearInterval(gameState?.timerInterval);
   gameState = {
     score: 0,
     combo: 0,
@@ -1476,20 +1492,22 @@ function startMiniGame() {
     timeRemaining: parseInt(appSettings.mini_game_duration, 10) || 60,
     currentQuestion: null,
     answered: false,
+    videoPaused: false,
   };
 
   // Shuffle questions
   const shuffled = shuffleArray([...questionsData.questions]);
 
-  document.getElementById('game-placeholder')?.style && (document.getElementById('game-placeholder').style.display = 'none');
+  document.getElementById('game-placeholder').style.display = 'none';
   document.getElementById('game-question').style.display = 'block';
   document.getElementById('game-result').style.display = 'none';
 
   updateGameUI();
   loadGameQuestion(shuffled);
 
-  // Start timer
+  // Start timer (paused while a question/answer video is playing)
   gameState.timerInterval = setInterval(() => {
+    if (!gameState || gameState.videoPaused) return;
     gameState.timeRemaining--;
 
     if (gameState.timeRemaining <= 0) {
@@ -1507,17 +1525,34 @@ function loadGameQuestion(allQuestions) {
   }
 
   const q = allQuestions.shift();
+  if (!q) {
+    endMiniGame();
+    return;
+  }
   gameState.currentQuestion = q;
   gameState.currentQuestionsPool = allQuestions;
   gameState.answered = false;
+  gameState.videoPaused = false;
 
-  // Display question
-  document.getElementById('game-sign-text').textContent = q.question;
+  // Display question (text may be empty for media-only questions)
+  const signEl = document.getElementById('game-sign-text');
+  signEl.textContent = q.question || '';
+  signEl.style.display = q.question ? '' : 'none';
+
+  const mediaEl = document.getElementById('game-media');
+  if (q.media_url) {
+    renderMediaInto(mediaEl, q.media_type, q.media_url);
+  } else {
+    mediaEl.innerHTML = '';
+  }
+  bindGameVideoPause(mediaEl);
 
   const optionsEl = document.getElementById('game-options');
-  optionsEl.innerHTML = q.options.map((opt, idx) => `
-    <button class="game-option-btn" onclick="answerGameOption(${idx})">${opt}</button>
-  `).join('');
+  optionsEl.innerHTML = q.options.map((opt, idx) => {
+    const mediaHtml = optionMediaHtml(q, idx, 'game');
+    return `<div class="game-option-btn${mediaHtml ? ' has-media' : ''}" role="button" tabindex="0" onclick="if (event.target.closest('video,iframe,audio')) return; answerGameOption(${idx})">${mediaHtml}<span>${escapeHtml(opt)}</span></div>`;
+  }).join('');
+  bindGameVideoPause(optionsEl);
 }
 
 function answerGameOption(index) {
@@ -1568,13 +1603,27 @@ function answerGameOption(index) {
 
   updateGameUI();
 
-  // Load next question after brief delay
+  // Load next question after brief delay (unless the sprint just ended)
   setTimeout(() => {
-    loadGameQuestion(gameState.currentQuestionsPool);
+    if (gameState) loadGameQuestion(gameState.currentQuestionsPool);
   }, 800);
 }
 
+function bindGameVideoPause(container) {
+  if (!container) return;
+  container.querySelectorAll('video').forEach(video => {
+    const pause = () => { if (gameState) gameState.videoPaused = true; };
+    const resume = () => { if (gameState) gameState.videoPaused = false; };
+    video.addEventListener('play', pause);
+    video.addEventListener('playing', pause);
+    video.addEventListener('pause', resume);
+    video.addEventListener('ended', resume);
+    video.addEventListener('error', resume);
+  });
+}
+
 function updateGameUI() {
+  if (!gameState) return;
   document.getElementById('game-score').textContent = gameState.score;
 
   const timerEl = document.getElementById('game-timer');
@@ -1594,6 +1643,7 @@ function updateGameUI() {
 }
 
 function endMiniGame() {
+  if (!gameState) return;
   clearInterval(gameState.timerInterval);
 
   document.getElementById('game-question').style.display = 'none';
@@ -1613,11 +1663,20 @@ function endMiniGame() {
 }
 
 function resetMiniGame() {
-  document.getElementById('game-result').style.display = 'none';
-  document.getElementById('game-question').style.display = 'none';
-  document.getElementById('game-placeholder').style.display = 'block';
-  document.getElementById('game-timer').classList.remove('warning');
+  stopMiniGame();
+}
+
+function stopMiniGame() {
+  clearInterval(gameState?.timerInterval);
   gameState = null;
+  const result = document.getElementById('game-result');
+  const question = document.getElementById('game-question');
+  const placeholder = document.getElementById('game-placeholder');
+  if (result) result.style.display = 'none';
+  if (question) question.style.display = 'none';
+  if (placeholder) placeholder.style.display = 'block';
+  const timer = document.getElementById('game-timer');
+  if (timer) timer.classList.remove('warning');
 }
 
 // ============================================
@@ -1651,6 +1710,16 @@ function switchAdminTab(tab) {
 }
 
 let editingQuestionId = null;
+
+function openQuestionComposer() {
+  switchAdminTab('create');
+  setTimeout(() => {
+    const field = document.getElementById('admin-question');
+    if (!field) return;
+    field.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    field.focus({ preventScroll: true });
+  }, 80);
+}
 
 function populateAdminCategories(skipDraft = false) {
   // Reset edit state
@@ -2973,9 +3042,16 @@ function renderSettingsForm(settings) {
     'exam_questions': '📋 Вопросов в экзамене',
     'exam_time_minutes': '⏱️ Время экзамена (мин)',
     'mini_game_duration': '🎮 Длительность мини-игры (сек)',
+    'pro_duration_days': '📅 Срок Pro подписки (дней)',
     'free_plan_enabled': '🆓 Бесплатный план',
     'pro_plan_enabled': '💎 Pro план доступен',
     'lives_stars_price': '❤️ Цена жизней (Stars)',
+    'free_bird_games': '🐤 Flippy Bird: бесплатных игр в день',
+    'bird_obstacles_min': '🐤 Flippy Bird: минимум препятствий',
+    'bird_obstacles_max': '🐤 Flippy Bird: максимум препятствий',
+    'bird_question_seconds': '🐤 Flippy Bird: секунд на ответ',
+    'bird_ad_reward_max': '🐤 Flippy Bird: бонусных игр за рекламу (0 — без лимита)',
+    'bird_ad_duration': '🐤 Flippy Bird: длительность рекламы (сек)',
     'discount_enabled': '🏷️ Скидка включена',
     'discount_percent': '📉 Размер скидки (%)',
     'discount_price': '💰 Цена со скидкой (Stars)',
@@ -2987,7 +3063,7 @@ function renderSettingsForm(settings) {
   container.innerHTML = settings.map(s => {
     const label = settingLabels[s.key] || s.key;
     const isBool = boolKeys.includes(s.key);
-    const isNumber = ['pro_stars_price', 'free_error_limit', 'max_daily_lives', 'daily_questions_target', 'exam_questions', 'exam_time_minutes', 'mini_game_duration', 'lives_stars_price', 'discount_percent', 'discount_price'].includes(s.key);
+    const isNumber = ['pro_stars_price', 'pro_duration_days', 'free_error_limit', 'max_daily_lives', 'daily_questions_target', 'exam_questions', 'exam_time_minutes', 'mini_game_duration', 'lives_stars_price', 'discount_percent', 'discount_price', 'free_bird_games', 'bird_obstacles_min', 'bird_obstacles_max', 'bird_question_seconds', 'bird_ad_reward_max', 'bird_ad_duration'].includes(s.key);
 
     if (isBool) {
       return `
@@ -3035,10 +3111,17 @@ async function saveSettings() {
 
   try {
     await apiPost('/api/settings', { settings });
-    alert('✅ Настройки сохранены!');
+    // Apply immediately, without waiting for a page reload.
+    await loadPublicSettings();
+    await fetchUserProfile();
+    updateUI();
+    renderSubscriptionCard();
+    refreshBirdStatus();
+    await loadAdminSettings();
+    toast('✅ Настройки сохранены и применены');
   } catch (e) {
     console.error('Failed to save settings:', e);
-    alert('❌ Ошибка сохранения настроек');
+    toast('❌ Ошибка сохранения настроек', 'error');
   }
 }
 
@@ -3335,10 +3418,15 @@ const BIRD = {
   qTimer: null,
   qAnswered: true,
   qTotal: 15,
-  qDeadline: 0,
+  qVideoPending: false,
   qResolveTimer: null,
   adTimer: null,
   adLeft: 0,
+  starting: false,
+  runId: 0,
+  qRemainingMs: 0,
+  qRunning: false,
+  qLastTick: 0,
 };
 
 const BIRD_PIPE_W = 58;
@@ -3351,6 +3439,8 @@ function birdRand(min, max) {
 
 function birdStatusDefaults() {
   const limit = parseInt(appSettings.free_bird_games, 10) || 3;
+  const adRaw = parseInt(appSettings.bird_ad_reward_max, 10);
+  const adMax = Number.isFinite(adRaw) ? adRaw : 5;
   return {
     limit,
     games_left: limit,
@@ -3358,8 +3448,9 @@ function birdStatusDefaults() {
     total_games_left: limit,
     unlimited: !!state.user.isAdmin,
     is_pro: false,
-    ad_rewards_left: parseInt(appSettings.bird_ad_reward_max, 10) || 5,
-    ad_reward_max: parseInt(appSettings.bird_ad_reward_max, 10) || 5,
+    ad_rewards_left: adMax <= 0 ? null : adMax,
+    ad_reward_max: adMax,
+    ad_reward_unlimited: adMax <= 0,
     ad_duration: parseInt(appSettings.bird_ad_duration, 10) || 5,
     obstacles_min: parseInt(appSettings.bird_obstacles_min, 10) || 4,
     obstacles_max: parseInt(appSettings.bird_obstacles_max, 10) || 11,
@@ -3390,11 +3481,25 @@ function renderBirdStatus() {
     }
   }
 
-  const showAd = !s.unlimited && (s.ad_rewards_left ?? 0) > 0;
+  const adUnlimited = s.ad_rewards_left == null;
+  const adLeft = adUnlimited ? '∞' : s.ad_rewards_left;
+  const showAd = !s.unlimited && (adUnlimited || adLeft > 0);
   const adBtn = document.getElementById('bird-ad-btn');
-  if (adBtn) adBtn.style.display = showAd ? '' : 'none';
+  if (adBtn) {
+    adBtn.style.display = showAd ? '' : 'none';
+    adBtn.textContent = `🎬 Смотреть рекламу +1 игра${adUnlimited ? '' : ` (${adLeft})`}`;
+  }
   const overAd = document.getElementById('bird-over-ad-btn');
-  if (overAd) overAd.style.display = showAd ? '' : 'none';
+  if (overAd) {
+    overAd.style.display = showAd ? '' : 'none';
+    overAd.textContent = `🎬 Реклама +1 игра${adUnlimited ? '' : ` (${adLeft})`}`;
+  }
+}
+
+function openGameMode(mode) {
+  switchTab('game');
+  setGameMode(mode === 'sprint' ? 'sprint' : 'bird');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function setGameMode(mode) {
@@ -3405,6 +3510,7 @@ function setGameMode(mode) {
   document.getElementById('game-mode-sprint-btn').classList.toggle('active', !isBird);
 
   if (isBird) {
+    stopMiniGame();
     resizeBirdCanvas();
     if (!BIRD.state?.running) birdShowStart();
     else drawBirdFrame();
@@ -3454,13 +3560,22 @@ function birdTarget() {
 }
 
 async function startBirdGame() {
-  if (BIRD.state?.running) return;
+  // Several taps used to send several /start requests and spawn several
+  // requestAnimationFrame loops — the game sped up and the counter jumped.
+  if (BIRD.starting || BIRD.state?.running) return;
   if (!questionsData?.questions?.length) {
     toast('В базе пока нет вопросов', 'error');
     return;
   }
 
+  const btn = document.getElementById('bird-start-btn');
+  BIRD.starting = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Загрузка…';
+  }
   closeBirdLimitModal();
+
   try {
     BIRD.status = await apiPost('/api/bird/start', {});
     renderBirdStatus();
@@ -3469,12 +3584,16 @@ async function startBirdGame() {
     if (e.status === 402) {
       BIRD.status = { ...(BIRD.status || birdStatusDefaults()), ...(e.data || {}) };
       openBirdLimitModal();
-      return;
-    }
-    if (IS_LOCAL_DEV) {
+    } else if (IS_LOCAL_DEV) {
       birdBegin();
     } else {
       toast(e.message || 'Не удалось начать игру', 'error');
+    }
+  } finally {
+    BIRD.starting = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '▶ Играть';
     }
   }
 }
@@ -3484,6 +3603,12 @@ function birdBegin() {
   document.getElementById('bird-over-overlay').style.display = 'none';
   closeBirdQuestion();
   resizeBirdCanvas();
+
+  // Every run gets its own id: stale loops exit instead of updating the bird.
+  if (BIRD.state) BIRD.state.running = false;
+  cancelAnimationFrame(BIRD.raf);
+  BIRD.runId = (BIRD.runId || 0) + 1;
+  const runId = BIRD.runId;
 
   BIRD.state = {
     y: BIRD.H * 0.45,
@@ -3505,20 +3630,20 @@ function birdBegin() {
   };
 
   updateBirdHud();
-  cancelAnimationFrame(BIRD.raf);
   BIRD.lastTs = performance.now();
-  BIRD.raf = requestAnimationFrame(birdLoop);
+  BIRD.raf = requestAnimationFrame(ts => birdLoop(ts, runId));
   birdHaptic('light');
 }
 
-function birdLoop(ts) {
+function birdLoop(ts, runId) {
+  if (runId !== BIRD.runId) return;
   const st = BIRD.state;
   if (!st || !st.running) return;
   const dt = Math.min(0.034, Math.max(0.001, (ts - BIRD.lastTs) / 1000));
   BIRD.lastTs = ts;
   if (!st.paused && !st.tabPaused) birdUpdate(dt);
   birdDraw();
-  BIRD.raf = requestAnimationFrame(birdLoop);
+  BIRD.raf = requestAnimationFrame(t => birdLoop(t, runId));
 }
 
 function birdPause(paused) {
@@ -3532,20 +3657,20 @@ function birdUpdate(dt) {
   const groundY = BIRD.H - BIRD.ground;
   const bx = BIRD.W * BIRD_BIRD_X;
 
-  st.vy += 1420 * dt;
+  st.vy += 980 * dt;
   st.y += st.vy * dt;
   if (st.y < 16) {
     st.y = 16;
     st.vy = 0;
   }
 
-  const spacing = Math.max(190, BIRD.W * 0.56);
-  st.pipes.forEach(p => { p.x -= 165 * dt; });
+  const spacing = Math.max(205, BIRD.W * 0.6);
+  st.pipes.forEach(p => { p.x -= 130 * dt; });
 
   const last = st.pipes[st.pipes.length - 1];
   if (!last || last.x < BIRD.W - spacing) {
-    const gap = Math.max(130, BIRD.H * 0.3);
-    const gapY = birdRand(58, Math.max(70, Math.round(groundY - gap - 58)));
+    const gap = Math.max(152, BIRD.H * 0.32);
+    const gapY = birdRand(64, Math.max(76, Math.round(groundY - gap - 64)));
     st.pipes.push({ x: BIRD.W + 24, gapY, gapH: gap, passed: false });
   }
 
@@ -3598,7 +3723,7 @@ function birdHit() {
   st.vy = 0;
   st.pipes = [];
   st.roundPassed = 0;
-  st.target = birdTarget();
+  // Keep the target fixed until the next question; only the progress resets.
   st.paused = true;
 
   setTimeout(() => {
@@ -3612,7 +3737,7 @@ function birdHit() {
 function birdFlap() {
   const st = BIRD.state;
   if (!st || !st.running || st.paused || st.tabPaused) return;
-  st.vy = -440;
+  st.vy = -340;
   birdHaptic('light');
 }
 
@@ -3654,29 +3779,78 @@ function showBirdQuestion() {
   BIRD.question = q;
   BIRD.qAnswered = false;
   BIRD.qTotal = Math.max(5, parseInt((BIRD.status || {}).question_seconds, 10) || 15);
-  BIRD.qDeadline = Date.now() + BIRD.qTotal * 1000;
+  BIRD.qRemainingMs = BIRD.qTotal * 1000;
+  BIRD.qLastTick = Date.now();
 
-  document.getElementById('bird-q-text').textContent = q.question || 'Вопрос';
+  const textEl = document.getElementById('bird-q-text');
+  textEl.textContent = q.question || '';
+  textEl.style.display = q.question ? '' : 'none';
+
+  const mediaEl = document.getElementById('bird-q-media');
+  if (q.media_url) {
+    renderMediaInto(mediaEl, q.media_type, q.media_url);
+  } else {
+    mediaEl.innerHTML = '';
+  }
+
   document.getElementById('bird-q-feedback').textContent = '';
   document.getElementById('bird-q-feedback').className = 'bird-q-feedback';
   document.getElementById('bird-q-lives').textContent = '❤️'.repeat(Math.max(0, st.lives));
-  document.getElementById('bird-q-options').innerHTML = q.options.map((opt, idx) =>
-    `<button class="bird-q-option" onclick="birdAnswer(${idx})">${escapeHtml(opt)}</button>`
-  ).join('');
+  document.getElementById('bird-q-options').innerHTML = q.options.map((opt, idx) => {
+    const mediaHtml = optionMediaHtml(q, idx, 'bird');
+    return `<div class="bird-q-option${mediaHtml ? ' has-media' : ''}" role="button" tabindex="0" onclick="if (event.target.closest('video,iframe,audio')) return; birdAnswer(${idx})">${mediaHtml}<span>${escapeHtml(opt)}</span></div>`;
+  }).join('');
 
   document.getElementById('bird-question-modal').style.display = 'flex';
-  birdTickQuestion();
+
+  // A question video must be watched first: the countdown stays frozen until
+  // it ends. Any other video (e.g. in an answer) also pauses the countdown.
+  const questionVideo = mediaEl.querySelector('video');
+  BIRD.qVideoPending = !!questionVideo;
+  BIRD.qRunning = !BIRD.qVideoPending;
+  document.querySelectorAll('#bird-question-modal video').forEach(video => {
+    video.addEventListener('play', () => { BIRD.qRunning = false; });
+    video.addEventListener('pause', () => {
+      if (!BIRD.qVideoPending) BIRD.qRunning = true;
+    });
+    const startAfterVideo = () => {
+      BIRD.qVideoPending = false;
+      BIRD.qRunning = true;
+      BIRD.qLastTick = Date.now();
+      const feedback = document.getElementById('bird-q-feedback');
+      if (feedback?.classList.contains('is-video-note')) {
+        feedback.textContent = '';
+        feedback.className = 'bird-q-feedback';
+      }
+    };
+    video.addEventListener('ended', startAfterVideo);
+    video.addEventListener('error', startAfterVideo);
+  });
+
+  if (BIRD.qVideoPending) {
+    const note = document.getElementById('bird-q-feedback');
+    note.textContent = '⏸ Таймер начнётся после просмотра видео';
+    note.className = 'bird-q-feedback is-video-note';
+  }
+
   clearInterval(BIRD.qTimer);
+  birdTickQuestion();
   BIRD.qTimer = setInterval(birdTickQuestion, 100);
   birdHaptic('light');
 }
 
 function birdTickQuestion() {
-  const leftMs = Math.max(0, BIRD.qDeadline - Date.now());
+  const now = Date.now();
+  if (BIRD.qRunning) {
+    BIRD.qRemainingMs -= now - BIRD.qLastTick;
+  }
+  BIRD.qLastTick = now;
+
+  const leftMs = Math.max(0, BIRD.qRemainingMs);
   const left = Math.ceil(leftMs / 1000);
   const timerEl = document.getElementById('bird-q-timer');
   timerEl.textContent = String(left);
-  timerEl.classList.toggle('warning', left <= 5);
+  timerEl.classList.toggle('warning', left <= 5 && BIRD.qRunning);
   document.getElementById('bird-q-progress-fill').style.width =
     `${Math.max(0, Math.min(100, (leftMs / (BIRD.qTotal * 1000)) * 100))}%`;
   if (leftMs <= 0) resolveBirdAnswer(-1);
@@ -3766,7 +3940,12 @@ function closeBirdQuestion() {
   clearInterval(BIRD.qTimer);
   clearTimeout(BIRD.qResolveTimer);
   const modal = document.getElementById('bird-question-modal');
-  if (modal) modal.style.display = 'none';
+  if (modal) {
+    modal.querySelectorAll('video').forEach(video => {
+      try { video.pause(); } catch (e) { /* ignore */ }
+    });
+    modal.style.display = 'none';
+  }
 }
 
 async function birdGameOver() {
@@ -3893,6 +4072,8 @@ function birdDraw() {
     ctx.save();
     ctx.translate(bx, by + bob);
     ctx.rotate(st ? Math.max(-0.5, Math.min(1.0, st.vy / 900)) : 0);
+    // 🐤 is drawn facing left in most emoji fonts; mirror it to fly right.
+    ctx.scale(-1, 1);
     ctx.font = '30px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -3931,9 +4112,10 @@ function openBirdLimitModal() {
   }
   const adBtn = document.getElementById('bird-limit-ad-btn');
   if (adBtn) {
-    const left = s.ad_rewards_left ?? 0;
-    adBtn.style.display = left > 0 ? '' : 'none';
-    adBtn.textContent = `🎬 Смотреть рекламу +1 игра (${left})`;
+    const adUnlimited = s.ad_rewards_left == null;
+    const left = adUnlimited ? '∞' : s.ad_rewards_left;
+    adBtn.style.display = (adUnlimited || left > 0) ? '' : 'none';
+    adBtn.textContent = `🎬 Смотреть рекламу +1 игра${adUnlimited ? '' : ` (${left})`}`;
   }
   document.getElementById('bird-limit-modal').style.display = 'flex';
 }
@@ -3944,13 +4126,13 @@ function closeBirdLimitModal() {
 
 function watchBirdRewardAd() {
   const s = BIRD.status;
-  if (s && !s.unlimited && (s.ad_rewards_left ?? 0) <= 0) {
+  if (s && !s.unlimited && s.ad_rewards_left != null && s.ad_rewards_left <= 0) {
     toast('Бонусные игры на сегодня закончились', 'error');
     return;
   }
 
   closeBirdLimitModal();
-  BIRD.adLeft = Math.max(3, parseInt((BIRD.status || {}).ad_duration, 10) || 5);
+  BIRD.adLeft = Math.max(1, parseInt((BIRD.status || {}).ad_duration, 10) || 5);
   const modal = document.getElementById('bird-ad-modal');
   const btn = document.getElementById('bird-ad-claim-btn');
   modal.style.display = 'flex';

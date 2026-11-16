@@ -779,6 +779,10 @@ def get_user():
     user.last_active = datetime.utcnow()
     db.session.commit()
 
+    pro_price, _pro_base, discount_percent, discount_active = get_pro_price()
+    pro_available = get_setting('pro_plan_enabled', 'true') == 'true'
+    duration_days = max(1, _int_setting('pro_duration_days', 30))
+
     return jsonify({
         'user': user.to_dict(),
         'stats': user.stats.to_dict() if user.stats else {},
@@ -789,6 +793,12 @@ def get_user():
             'is_pro': is_pro(user),
             'error_limit': get_error_limit(user),
             'error_count': UserError.query.filter_by(user_id=user.id).count(),
+            'pro_price': pro_price,
+            'pro_base_price': _pro_base,
+            'pro_available': pro_available,
+            'pro_duration_days': duration_days,
+            'discount_active': discount_active,
+            'discount_percent': discount_percent if discount_active else 0,
         },
     })
 
@@ -1215,6 +1225,7 @@ def _bird_reset_daily(stats):
 def _bird_payload(user, stats):
     limit = _bird_int_setting('free_bird_games', 3)
     ad_max = _bird_int_setting('bird_ad_reward_max', 5)
+    ad_unlimited = ad_max <= 0  # 0 in admin settings means unlimited ad rewards
     played = stats.bird_games_played or 0
     bonus = stats.bird_bonus_games or 0
     unlimited = is_pro(user) or bool(user.is_admin)
@@ -1230,8 +1241,9 @@ def _bird_payload(user, stats):
         'total_games_left': (999 if unlimited else max(0, limit - played) + bonus),
         'is_pro': is_pro(user),
         'unlimited': unlimited,
-        'ad_rewards_left': max(0, ad_max - (stats.bird_rewards_today or 0)),
+        'ad_rewards_left': None if ad_unlimited else max(0, ad_max - (stats.bird_rewards_today or 0)),
         'ad_reward_max': ad_max,
+        'ad_reward_unlimited': ad_unlimited,
         'ad_duration': _bird_int_setting('bird_ad_duration', 5),
         'obstacles_min': ost_min,
         'obstacles_max': ost_max,
@@ -1301,7 +1313,8 @@ def bird_reward():
     _bird_reset_daily(stats)
 
     ad_max = _bird_int_setting('bird_ad_reward_max', 5)
-    if (stats.bird_rewards_today or 0) >= ad_max:
+    # 0 = no daily cap on rewarded ads.
+    if ad_max > 0 and (stats.bird_rewards_today or 0) >= ad_max:
         db.session.commit()
         payload = _bird_payload(user, stats)
         payload['allowed'] = False
@@ -1517,6 +1530,7 @@ def delete_category(cat_id):
 
 DEFAULT_SETTINGS = {
     'pro_stars_price': {'value': '1500', 'description': 'Цена Pro подписки в Telegram Stars'},
+    'pro_duration_days': {'value': '30', 'description': 'Срок Pro подписки в днях'},
     'free_error_limit': {'value': '10', 'description': 'Максимум ошибок для бесплатного плана'},
     'max_daily_lives': {'value': '3', 'description': 'Количество жизней в день'},
     'daily_questions_target': {'value': '10', 'description': 'Цель по вопросам в день'},
@@ -1527,7 +1541,7 @@ DEFAULT_SETTINGS = {
     'bird_obstacles_min': {'value': '4', 'description': 'Flippy Bird: минимум препятствий до вопроса'},
     'bird_obstacles_max': {'value': '11', 'description': 'Flippy Bird: максимум препятствий до вопроса'},
     'bird_question_seconds': {'value': '15', 'description': 'Flippy Bird: секунд на ответ'},
-    'bird_ad_reward_max': {'value': '5', 'description': 'Flippy Bird: максимум бонусных игр за рекламу в день'},
+    'bird_ad_reward_max': {'value': '5', 'description': 'Flippy Bird: бонусных игр за рекламу в день (0 — без ограничений)'},
     'bird_ad_duration': {'value': '5', 'description': 'Flippy Bird: длительность rewarded-рекламы (сек)'},
     'free_plan_enabled': {'value': 'true', 'description': 'Бесплатный план доступен'},
     'pro_plan_enabled': {'value': 'true', 'description': 'Pro план доступен для покупки'},
@@ -1588,7 +1602,8 @@ def get_public_settings():
     keys = [
         'exam_questions', 'exam_time_minutes', 'mini_game_duration',
         'daily_questions_target', 'max_daily_lives', 'free_error_limit',
-        'pro_stars_price', 'lives_stars_price',
+        'pro_stars_price', 'pro_duration_days', 'lives_stars_price',
+        'free_plan_enabled', 'pro_plan_enabled',
         'free_bird_games', 'bird_obstacles_min', 'bird_obstacles_max',
         'bird_question_seconds', 'bird_ad_reward_max', 'bird_ad_duration',
     ]
@@ -1604,7 +1619,51 @@ def get_public_settings():
 
 # These will now be read from settings
 FREE_ERROR_LIMIT = 10
-PRO_STARS_PRICE = 1500  # Telegram Stars per month
+PRO_STARS_PRICE = 1500  # fallback, overridden by the pro_stars_price setting
+
+
+def _int_setting(key, default):
+    try:
+        return int(get_setting(key, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def get_pro_base_price():
+    """Base Pro price from settings (not a hard-coded constant)."""
+    return max(1, _int_setting('pro_stars_price', PRO_STARS_PRICE))
+
+
+def get_pro_price():
+    """Return (price, base price, actual discount %, discount active).
+
+    Supports both a fixed discounted price and a percentage. An expired
+    discount is ignored automatically.
+    """
+    base = get_pro_base_price()
+    if get_setting('discount_enabled', 'false') != 'true':
+        return base, base, 0, False
+
+    expires = (get_setting('discount_expires', '') or '').strip()
+    if expires:
+        try:
+            if date.today() > datetime.strptime(expires, '%Y-%m-%d').date():
+                return base, base, 0, False
+        except ValueError:
+            pass
+
+    fixed = _int_setting('discount_price', 0)
+    percent = _int_setting('discount_percent', 0)
+    if fixed > 0:
+        price = fixed
+    elif percent > 0:
+        price = round(base * (100 - min(100, percent)) / 100)
+    else:
+        return base, base, 0, False
+
+    price = max(1, min(base, price))
+    actual_percent = round((base - price) / base * 100) if base else 0
+    return price, base, actual_percent, price < base
 
 
 def get_user_subscription(user):
@@ -1704,23 +1763,10 @@ def get_subscription():
     error_count = UserError.query.filter_by(user_id=user.id).count()
     error_limit = get_error_limit(user)
 
-    # Calculate current Pro price (with discount)
-    pro_price = PRO_STARS_PRICE
-    discount_enabled = get_setting('discount_enabled', 'false') == 'true'
-    discount_price = int(get_setting('discount_price', '0'))
-    discount_expires = get_setting('discount_expires', '')
-    discount_percent = int(get_setting('discount_percent', '0'))
-
-    if discount_enabled and discount_price > 0:
-        if discount_expires:
-            try:
-                expires_date = datetime.strptime(discount_expires, '%Y-%m-%d').date()
-                if date.today() <= expires_date:
-                    pro_price = discount_price
-            except ValueError:
-                pass
-        else:
-            pro_price = discount_price
+    # Calculate current Pro price and duration from settings
+    pro_price, pro_base_price, discount_percent, discount_active = get_pro_price()
+    pro_available = get_setting('pro_plan_enabled', 'true') == 'true'
+    duration_days = max(1, _int_setting('pro_duration_days', 30))
 
     return jsonify({
         'plan': sub.plan,
@@ -1731,8 +1777,11 @@ def get_subscription():
         'error_limit': error_limit,
         'errors_remaining': None if error_limit is None else max(0, error_limit - error_count),
         'pro_price': pro_price,
-        'discount_active': discount_enabled and pro_price < PRO_STARS_PRICE,
-        'discount_percent': discount_percent if discount_enabled else 0,
+        'pro_base_price': pro_base_price,
+        'pro_available': pro_available,
+        'pro_duration_days': duration_days,
+        'discount_active': discount_active,
+        'discount_percent': discount_percent if discount_active else 0,
     })
 
 
@@ -1751,34 +1800,22 @@ def create_invoice():
     import requests as http_requests
 
     tg_id = request.tg_user['id']
+    if get_setting('pro_plan_enabled', 'true') != 'true':
+        return jsonify({'error': 'Pro подписка временно недоступна'}), 403
+
     bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
     if not bot_token:
         return jsonify({'error': 'Bot token not configured'}), 500
 
-    # Check for active discount
-    discount_enabled = get_setting('discount_enabled', 'false') == 'true'
-    discount_price = int(get_setting('discount_price', '0'))
-    discount_expires = get_setting('discount_expires', '')
-
-    # Calculate price
-    price = PRO_STARS_PRICE
-    if discount_enabled and discount_price > 0:
-        # Check if discount hasn't expired
-        if discount_expires:
-            try:
-                expires_date = datetime.strptime(discount_expires, '%Y-%m-%d').date()
-                if date.today() <= expires_date:
-                    price = discount_price
-            except ValueError:
-                pass
-        else:
-            price = discount_price
+    # Price and duration come from the admin settings (no redeploy).
+    price, _base, _percent, _active = get_pro_price()
+    duration_days = max(1, _int_setting('pro_duration_days', 30))
 
     # Build payload
     payload = json.dumps({
         'user_id': tg_id,
         'product': 'pro_subscription',
-        'duration_days': 30,
+        'duration_days': duration_days,
         'timestamp': int(time.time()),
     })
 
@@ -1787,11 +1824,11 @@ def create_invoice():
         f'https://api.telegram.org/bot{bot_token}/createInvoiceLink',
         json={
             'title': 'ZholRules Pro',
-            'description': 'Pro подписка на 30 дней — безлимитные тесты и ошибки',
+            'description': f'Pro подписка на {duration_days} дней — безлимитные тесты и ошибки',
             'payload': payload,
             'provider_token': '',  # Empty for Telegram Stars
             'currency': 'XTR',  # Telegram Stars
-            'prices': [{'label': 'Pro 30 дней', 'amount': price}],
+            'prices': [{'label': f'Pro {duration_days} дней', 'amount': price}],
         },
         timeout=10,
     )
@@ -1801,10 +1838,11 @@ def create_invoice():
         logger.error(f'Invoice creation failed: {data}')
         return jsonify({'error': 'Failed to create invoice', 'details': data}), 500
 
-    logger.info(f'Invoice created: user={tg_id} amount={PRO_STARS_PRICE} Stars')
+    logger.info(f'Invoice created: user={tg_id} amount={price} Stars duration={duration_days}d')
     return jsonify({
         'invoice_url': data['result'],
-        'amount': PRO_STARS_PRICE,
+        'amount': price,
+        'duration_days': duration_days,
     })
 
 
@@ -1909,7 +1947,11 @@ def telegram_webhook():
             payload = {}
 
         product = payload.get('product', '')
-        duration = payload.get('duration_days', 30)
+        try:
+            duration = int(payload.get('duration_days') or get_setting('pro_duration_days', '30'))
+        except (TypeError, ValueError):
+            duration = 30
+        duration = max(1, duration)
         telegram_charge_id = payment.get('telegram_payment_charge_id', '')
 
         if product == 'pro_subscription':
@@ -1917,10 +1959,13 @@ def telegram_webhook():
             user = User.query.filter_by(tg_id=user_id).first()
             if user:
                 sub = get_user_subscription(user)
+                now = datetime.utcnow()
+                # Renewal extends the current active period instead of resetting it.
+                base = sub.expires_at if sub.expires_at and sub.expires_at > now else now
                 sub.plan = 'pro'
                 sub.is_active = True
-                sub.started_at = datetime.utcnow()
-                sub.expires_at = datetime.utcnow() + timedelta(days=duration)
+                sub.started_at = sub.started_at or now
+                sub.expires_at = base + timedelta(days=duration)
                 db.session.commit()
 
                 logger.info(f'Pro activated via webhook: user={user_id} expires={sub.expires_at}')
@@ -1931,7 +1976,7 @@ def telegram_webhook():
                     json={
                         'chat_id': user_id,
                         'text': f'✅ Pro подписка активирована!\n\n'
-                                f'Действует 30 дней.\n'
+                                f'Действует {duration} дней (до {sub.expires_at.strftime("%d.%m.%Y")}).\n'
                                 f'Безлимитные тесты и ошибки.\n\n'
                                 f'Чек: `{telegram_charge_id[:20]}...`',
                         'parse_mode': 'Markdown',

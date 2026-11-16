@@ -182,12 +182,23 @@
           <div class="mode-title">Состязание</div>
           <div class="mode-desc">Онлайн vs игрок</div>
         </div>
+        <div class="mode-card mode-card-game" onclick="openGameMode('bird')">
+          <div class="mode-icon">🐤</div>
+          <div class="mode-title">Flippy Bird</div>
+          <div class="mode-desc">Птица + вопросы</div>
+        </div>
+        <div class="mode-card mode-card-game" onclick="openGameMode('sprint')">
+          <div class="mode-icon">🏎️</div>
+          <div class="mode-title">Спринт 60 сек</div>
+          <div class="mode-desc">Быстрые вопросы</div>
+        </div>
       </div>
 
     </div>
 
     <!-- Tab: Game -->
     <div id="tab-game" class="tab-content">
+      <button class="game-back-btn" onclick="switchTab('home')">← На главную</button>
       <div class="game-mode-switch">
         <button class="game-mode-btn active" id="game-mode-bird-btn" onclick="setGameMode('bird')">
           <span class="game-mode-icon">🐤</span><span>Flippy Bird</span>
@@ -256,6 +267,7 @@
               <button class="btn btn-primary" onclick="startMiniGame()">Старт!</button>
             </div>
             <div class="game-question" id="game-question" style="display:none;">
+              <div class="game-media" id="game-media"></div>
               <div class="game-sign" id="game-sign-text"></div>
               <div class="game-options" id="game-options">
                 <!-- Filled by JS -->
@@ -514,25 +526,28 @@
           <button type="button" class="btn btn-secondary btn-small admin-add-option" onclick="addAdminOption()">+ Добавить вариант</button>
           <div class="admin-hint">Enter — новый вариант. Нажмите ✓ у правильного ответа.</div>
         </div>
-        <div class="form-group">
-          <label>Тип выбора</label>
-          <select id="admin-choice-type" class="input-field">
-            <option value="single">Один правильный ответ</option>
-            <option value="multiple">Несколько правильных ответов</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Пояснение</label>
-          <textarea id="admin-explanation" class="input-field" placeholder="Объяснение правильного ответа..."></textarea>
-        </div>
-        <div class="form-group">
-          <label>Сложность</label>
-          <select id="admin-difficulty" class="input-field">
-            <option value="easy">Лёгкий</option>
-            <option value="medium">Средний</option>
-            <option value="hard">Сложный</option>
-          </select>
-        </div>
+        <details class="admin-advanced">
+          <summary>⚙️ Дополнительно: тип выбора, пояснение, сложность</summary>
+          <div class="form-group">
+            <label>Тип выбора</label>
+            <select id="admin-choice-type" class="input-field">
+              <option value="single">Один правильный ответ</option>
+              <option value="multiple">Несколько правильных ответов</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Пояснение</label>
+            <textarea id="admin-explanation" class="input-field" placeholder="Объяснение правильного ответа..."></textarea>
+          </div>
+          <div class="form-group">
+            <label>Сложность</label>
+            <select id="admin-difficulty" class="input-field">
+              <option value="easy">Лёгкий</option>
+              <option value="medium">Средний</option>
+              <option value="hard">Сложный</option>
+            </select>
+          </div>
+        </details>
         <div class="admin-save-bar">
           <div class="admin-validation" id="admin-validation">0 вариантов · ответ не выбран</div>
           <div class="admin-save-actions">
@@ -628,6 +643,7 @@
           </div>
         </div>
       </div>
+      <button class="admin-fab" onclick="openQuestionComposer()" title="Добавить вопрос">＋</button>
     </div>
 
     <!-- Bottom Navigation -->
@@ -639,10 +655,6 @@
       <button class="nav-btn" data-tab="study" onclick="switchTab('study')">
         <span class="nav-icon">📚</span>
         <span class="nav-label">Учёба</span>
-      </button>
-      <button class="nav-btn" data-tab="game" onclick="switchTab('game')">
-        <span class="nav-icon">🐤</span>
-        <span class="nav-label">Игра</span>
       </button>
       <button class="nav-btn" data-tab="profile" onclick="switchTab('profile')">
         <span class="nav-icon">👤</span>
@@ -873,6 +885,7 @@
       </div>
       <div class="bird-q-progress"><div class="bird-q-progress-fill" id="bird-q-progress-fill"></div></div>
       <p class="bird-q-text" id="bird-q-text"></p>
+      <div class="bird-q-media" id="bird-q-media"></div>
       <div class="bird-q-options" id="bird-q-options"></div>
       <div class="bird-q-feedback" id="bird-q-feedback"></div>
       <div class="bird-q-lives" id="bird-q-lives">❤️❤️❤️</div>
