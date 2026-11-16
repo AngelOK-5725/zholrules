@@ -960,11 +960,25 @@ def export_questions():
 @require_admin
 def import_questions():
     """Import questions from JSON (admin only)."""
-    data = request.get_json()
-    questions = data.get('questions', [])
+    data = request.get_json(silent=True) or {}
+    questions = data.get('questions') or []
+    if not isinstance(questions, list):
+        return jsonify({'error': 'questions должен быть массивом'}), 400
 
     imported = 0
-    for q_data in questions:
+    skipped = []
+    for idx, q_data in enumerate(questions):
+        if not isinstance(q_data, dict):
+            skipped.append(idx)
+            continue
+        missing = [
+            f for f in ('category', 'question', 'options', 'correct_options')
+            if f not in q_data
+        ]
+        if missing:
+            logger.warning(f'Import skipped item {idx}: missing {missing}')
+            skipped.append(idx)
+            continue
         question = Question(
             category=q_data['category'],
             question=q_data['question'],
@@ -982,7 +996,7 @@ def import_questions():
         imported += 1
 
     db.session.commit()
-    return jsonify({'imported': imported}), 201
+    return jsonify({'imported': imported, 'skipped': skipped}), 201
 
 
 # ============================================
@@ -994,10 +1008,12 @@ def import_questions():
 def submit_answer():
     """Submit an answer and update stats."""
     tg_id = request.tg_user['id']
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
 
     question_id = data.get('question_id')
-    selected_options = data.get('selected_options', [])
+    selected_options = data.get('selected_options') or []
+    if not isinstance(selected_options, list):
+        return jsonify({'error': 'selected_options должен быть массивом'}), 400
 
     user = User.query.filter_by(tg_id=tg_id).first()
     if not user:
@@ -1130,8 +1146,10 @@ def add_errors_bulk():
     if not user:
         return jsonify({'error': 'User not found'}), 404
 
-    data = request.get_json()
-    question_ids = data.get('question_ids', [])
+    data = request.get_json(silent=True) or {}
+    question_ids = data.get('question_ids') or []
+    if not isinstance(question_ids, list):
+        return jsonify({'error': 'question_ids должен быть массивом'}), 400
 
     added = 0
     for qid in question_ids:
@@ -1174,8 +1192,11 @@ def leaderboard():
 def update_game_score():
     """Update user's mini-game high score."""
     tg_id = request.tg_user['id']
-    data = request.get_json()
-    score = data.get('score', 0)
+    data = request.get_json(silent=True) or {}
+    try:
+        score = int(data.get('score', 0) or 0)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'score должен быть числом'}), 400
 
     user = User.query.filter_by(tg_id=tg_id).first()
     if not user or not user.stats:
@@ -1382,7 +1403,9 @@ def bird_finish():
 
     data = request.get_json(silent=True) or {}
     try:
-        score = max(0, int(data.get('score', 0) or 0))
+        # Clamp: the high-score column is a 32-bit integer, so an absurd client
+        # value would overflow on commit.
+        score = min(1_000_000, max(0, int(data.get('score', 0) or 0)))
     except (TypeError, ValueError):
         score = 0
 
@@ -2138,7 +2161,6 @@ def init_db():
         db.create_all()
         ensure_question_columns()
         ensure_bird_columns()
-        sync_id_sequences()
 
         # Seed default categories if empty
         if Category.query.count() == 0:
@@ -2178,6 +2200,11 @@ def init_db():
 
                 db.session.commit()
                 logger.info(f'Seeded {len(data.get("questions", []))} questions from JSON')
+
+        # Must run AFTER seeding: rows inserted with explicit ids do not advance
+        # a Postgres sequence, so syncing first leaves the next admin INSERT
+        # colliding with an existing id (UniqueViolation).
+        sync_id_sequences()
 
 
 # ============================================
@@ -2308,6 +2335,15 @@ def handle_competition_answer(data):
     if not comp_data:
         emit('error', {'message': 'Competition not found'})
         return
+
+    # Only the two matched players may score in this match; without this a
+    # third client scores into a dict that has no key for it (KeyError).
+    if user_id not in (comp_data['player1']['user_id'], comp_data['player2']['user_id']):
+        emit('error', {'message': 'Вы не участник этого матча'})
+        return
+
+    if not isinstance(selected_options, list):
+        selected_options = []
 
     # Check answer
     question = Question.query.get(question_id)
@@ -2637,9 +2673,15 @@ def get_all_users():
 @require_admin
 def admin_set_subscription(user_id):
     """Set user subscription (admin only)."""
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     plan = data.get('plan', 'free')  # 'free' or 'pro'
-    duration_days = data.get('duration_days', 30)
+    if plan not in ('free', 'pro'):
+        return jsonify({'error': "plan должен быть 'free' или 'pro'"}), 400
+    try:
+        duration_days = int(data.get('duration_days', 30) or 30)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'duration_days должен быть числом'}), 400
+    duration_days = max(1, duration_days)
 
     user = User.query.get_or_404(user_id)
     sub = get_user_subscription(user)
