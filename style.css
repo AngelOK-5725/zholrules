@@ -2789,7 +2789,10 @@ input[type="date"] {
    ============================================ */
 
 #tab-admin {
-  padding-bottom: 4px;
+  /* The bottom nav is fixed (64px tall, z-index 200). Without this padding the
+     question editor's save bar ends up underneath it: visible in the DOM but
+     impossible to click on desktop. */
+  padding-bottom: calc(var(--nav-height) + var(--safe-bottom) + 16px);
 }
 
 .admin-hero {
