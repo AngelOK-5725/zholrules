@@ -475,6 +475,22 @@ class Media(db.Model):
         }
 
 
+class Payment(db.Model):
+    """A Telegram Stars payment we have already granted.
+
+    Telegram retries webhook deliveries, so the charge id is the idempotency
+    key: the same charge may never activate Pro twice.
+    """
+    __tablename__ = 'payments'
+
+    id = db.Column(db.Integer, primary_key=True)
+    charge_id = db.Column(db.String(255), unique=True, nullable=False)
+    tg_id = db.Column(db.BigInteger, nullable=False)
+    product = db.Column(db.String(40), default='')
+    amount = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 YOUTUBE_HOSTS = ('youtube.com', 'youtu.be', 'm.youtube.com', 'www.youtube.com', 'music.youtube.com')
 
 
@@ -1858,6 +1874,12 @@ def get_subscription():
 # ============================================
 # API: PAYMENTS (Telegram Stars)
 # ============================================
+# Lives granted per purchase and the fallback Stars price. The invoice and the
+# webhook read the same value, so the request body cannot inflate it.
+LIVES_PER_PURCHASE = 3
+LIVES_PER_PURCHASE_PRICE = 5
+
+
 @app.route('/api/payment/invoice', methods=['POST'])
 @require_auth
 def create_invoice():
@@ -1919,7 +1941,7 @@ def create_lives_invoice():
 
     tg_id = request.tg_user['id']
     bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
-    lives_price = int(get_setting('lives_stars_price', '5'))
+    lives_price = int(get_setting('lives_stars_price', str(LIVES_PER_PURCHASE_PRICE)))
 
     if not bot_token:
         # Dev mode: add lives directly
@@ -1932,7 +1954,7 @@ def create_lives_invoice():
     payload = json.dumps({
         'user_id': tg_id,
         'product': 'extra_lives',
-        'amount': 3,
+        'amount': LIVES_PER_PURCHASE,
         'timestamp': int(time.time()),
     })
 
@@ -1960,13 +1982,68 @@ def create_lives_invoice():
     })
 
 
+def _webhook_secret() -> str:
+    """Secret Telegram must send in X-Telegram-Bot-Api-Secret-Token.
+
+    Uses TELEGRAM_WEBHOOK_SECRET when set; otherwise derives a stable value
+    from the bot token so the endpoint is never left unauthenticated. The same
+    value is handed to setWebhook, so both sides always agree.
+    """
+    explicit = (os.getenv('TELEGRAM_WEBHOOK_SECRET', '') or '').strip()
+    if explicit:
+        return explicit
+    bot_token = (os.getenv('TELEGRAM_BOT_TOKEN', '') or '').strip()
+    if not bot_token:
+        return ''
+    return hashlib.sha256(f'zholrules-webhook:{bot_token}'.encode()).hexdigest()
+
+
+def _expected_payment_amounts(product: str) -> set:
+    """Prices a product may legitimately cost right now.
+
+    Both the discounted and the base price are accepted so that a discount
+    expiring between invoice creation and payment cannot drop a real payment.
+    """
+    if product == 'pro_subscription':
+        price, base, _percent, _active = get_pro_price()
+        return {price, base}
+    if product == 'extra_lives':
+        try:
+            return {int(get_setting('lives_stars_price', str(LIVES_PER_PURCHASE_PRICE)))}
+        except (TypeError, ValueError):
+            return set()
+    return set()
+
+
+def _payment_amount_ok(product: str, amount, currency) -> bool:
+    """True only for a Stars payment of a price we actually issue."""
+    if currency != 'XTR':
+        return False
+    try:
+        amount = int(amount)
+    except (TypeError, ValueError):
+        return False
+    return amount in _expected_payment_amounts(product)
+
+
 @app.route('/webhook/telegram', methods=['POST'])
 def telegram_webhook():
     """Telegram webhook for payments and other events."""
     import requests as http_requests
 
+    # Without this check anyone could POST a fake successful_payment and grant
+    # themselves Pro or lives.
+    expected_secret = _webhook_secret()
+    if not expected_secret:
+        logger.error('Webhook rejected: TELEGRAM_BOT_TOKEN missing, caller unverifiable')
+        return jsonify({'error': 'Webhook not configured'}), 503
+    received_secret = request.headers.get('X-Telegram-Bot-Api-Secret-Token', '')
+    if not hmac.compare_digest(received_secret, expected_secret):
+        logger.warning(f'Webhook rejected: bad secret token from {request.remote_addr}')
+        return jsonify({'error': 'Forbidden'}), 403
+
     bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
-    update = request.get_json(force=True)
+    update = request.get_json(silent=True) or {}
 
     # Step 1: Handle pre-checkout (approve the payment)
     if 'pre_checkout_query' in update:
@@ -1991,6 +2068,20 @@ def telegram_webhook():
             )
             return jsonify({'ok': True})
 
+        # The invoice total is client data too: approve only our own prices.
+        if not _payment_amount_ok(product, query.get('total_amount'), query.get('currency')):
+            logger.error(
+                f'Pre-checkout rejected: product={product} '
+                f'amount={query.get("total_amount")} currency={query.get("currency")}'
+            )
+            http_requests.post(
+                f'https://api.telegram.org/bot{bot_token}/answerPreCheckoutQuery',
+                json={'pre_checkout_query_id': query['id'], 'ok': False,
+                      'error_message': 'Сумма платежа не совпадает'},
+                timeout=5,
+            )
+            return jsonify({'ok': True})
+
         # Approve
         http_requests.post(
             f'https://api.telegram.org/bot{bot_token}/answerPreCheckoutQuery',
@@ -2001,86 +2092,105 @@ def telegram_webhook():
         return jsonify({'ok': True})
 
     # Step 2: Handle successful payment
-    if update.get('message', {}).get('successful_payment'):
-        payment = update['message']['successful_payment']
-        user_id = update['message']['from']['id']
-        payload_str = payment.get('invoice_payload', '{}')
+    message = update.get('message') or {}
+    payment = message.get('successful_payment')
+    if payment:
+        telegram_charge_id = payment.get('telegram_payment_charge_id', '')
+        user_id = (message.get('from') or {}).get('id')
+        if not telegram_charge_id or not user_id:
+            logger.error('Payment update without charge id or sender — ignored')
+            return jsonify({'ok': True})
 
+        # Telegram retries deliveries: one charge may be granted exactly once.
+        if Payment.query.filter_by(charge_id=telegram_charge_id).first():
+            logger.info(f'Duplicate payment ignored: charge={telegram_charge_id[:12]}...')
+            return jsonify({'ok': True})
+
+        payload_str = payment.get('invoice_payload', '{}')
         try:
             payload = json.loads(payload_str)
         except Exception:
             payload = {}
 
         product = payload.get('product', '')
-        try:
-            duration = int(payload.get('duration_days') or get_setting('pro_duration_days', '30'))
-        except (TypeError, ValueError):
-            duration = 30
-        duration = max(1, duration)
-        telegram_charge_id = payment.get('telegram_payment_charge_id', '')
+        amount = payment.get('total_amount')
+        currency = payment.get('currency', '')
+
+        # Everything that grants value is re-derived here: the payload only
+        # names the product, it never decides price, duration or lives.
+        if not _payment_amount_ok(product, amount, currency):
+            logger.error(
+                f'Payment rejected: product={product} amount={amount} '
+                f'currency={currency} charge={telegram_charge_id[:12]}...'
+            )
+            return jsonify({'ok': True})
+
+        duration = max(1, _int_setting('pro_duration_days', 30))
+
+        user = User.query.filter_by(tg_id=user_id).first()
+        if not user:
+            logger.error(f'User not found for webhook payment: {user_id}')
+            return jsonify({'ok': True})
+
+        db.session.add(Payment(
+            charge_id=telegram_charge_id,
+            tg_id=user_id,
+            product=product,
+            amount=int(amount),
+        ))
 
         if product == 'pro_subscription':
-            # Find user and activate subscription
-            user = User.query.filter_by(tg_id=user_id).first()
-            if user:
-                sub = get_user_subscription(user)
-                now = datetime.utcnow()
-                # Renewal extends the current active period instead of resetting it.
-                base = sub.expires_at if sub.expires_at and sub.expires_at > now else now
-                sub.plan = 'pro'
-                sub.is_active = True
-                sub.started_at = sub.started_at or now
-                sub.expires_at = base + timedelta(days=duration)
-                db.session.commit()
+            sub = get_user_subscription(user)
+            now = datetime.utcnow()
+            # Renewal extends the current active period instead of resetting it.
+            base = sub.expires_at if sub.expires_at and sub.expires_at > now else now
+            sub.plan = 'pro'
+            sub.is_active = True
+            sub.started_at = sub.started_at or now
+            sub.expires_at = base + timedelta(days=duration)
+            db.session.commit()
 
-                logger.info(f'Pro activated via webhook: user={user_id} expires={sub.expires_at}')
+            logger.info(f'Pro activated via webhook: user={user_id} expires={sub.expires_at}')
 
-                # Send confirmation message
-                http_requests.post(
-                    f'https://api.telegram.org/bot{bot_token}/sendMessage',
-                    json={
-                        'chat_id': user_id,
-                        'text': f'✅ Pro подписка активирована!\n\n'
-                                f'Действует {duration} дней (до {sub.expires_at.strftime("%d.%m.%Y")}).\n'
-                                f'Безлимитные тесты и ошибки.\n\n'
-                                f'Чек: `{telegram_charge_id[:20]}...`',
-                        'parse_mode': 'Markdown',
-                    },
-                    timeout=5,
-                )
-            else:
-                logger.error(f'User not found for webhook payment: {user_id}')
+            # Send confirmation message
+            http_requests.post(
+                f'https://api.telegram.org/bot{bot_token}/sendMessage',
+                json={
+                    'chat_id': user_id,
+                    'text': f'✅ Pro подписка активирована!\n\n'
+                            f'Действует {duration} дней (до {sub.expires_at.strftime("%d.%m.%Y")}).\n'
+                            f'Безлимитные тесты и ошибки.\n\n'
+                            f'Чек: `{telegram_charge_id[:20]}...`',
+                    'parse_mode': 'Markdown',
+                },
+                timeout=5,
+            )
 
-        if product == 'extra_lives':
-            lives_amount = payload.get('amount', 3)
-            user = User.query.filter_by(tg_id=user_id).first()
-            if user and user.stats:
-                user.stats.lives += lives_amount
-                db.session.commit()
+        elif product == 'extra_lives':
+            stats = user.stats
+            if not stats:
+                stats = UserStats(user=user, total_answered=0, total_correct=0, streak=0)
+                db.session.add(stats)
+            stats.lives += LIVES_PER_PURCHASE
+            db.session.commit()
 
-                logger.info(f'Lives added via webhook: user={user_id} +{lives_amount}')
+            logger.info(f'Lives added via webhook: user={user_id} +{LIVES_PER_PURCHASE}')
 
-                http_requests.post(
-                    f'https://api.telegram.org/bot{bot_token}/sendMessage',
-                    json={
-                        'chat_id': user_id,
-                        'text': f'❤️ +{lives_amount} жизней добавлено!\n\n'
-                                f'Теперь у тебя {user.stats.lives} жизней.',
-                    },
-                    timeout=5,
-                )
-            else:
-                logger.error(f'User not found for lives payment: {user_id}')
+            http_requests.post(
+                f'https://api.telegram.org/bot{bot_token}/sendMessage',
+                json={
+                    'chat_id': user_id,
+                    'text': f'❤️ +{LIVES_PER_PURCHASE} жизней добавлено!\n\n'
+                            f'Теперь у тебя {stats.lives} жизней.',
+                },
+                timeout=5,
+            )
 
         return jsonify({'ok': True})
 
-    # Step 3: Handle refund (optional)
-    if update.get('message', {}).get('successful_payment'):
-        pass  # Already handled above
-
     # Handle /paysupport command
-    if update.get('message', {}).get('text') == '/paysupport':
-        chat_id = update['message']['from']['id']
+    if (message.get('text') or '') == '/paysupport':
+        chat_id = (message.get('from') or {}).get('id')
         http_requests.post(
             f'https://api.telegram.org/bot{bot_token}/sendMessage',
             json={
@@ -2095,16 +2205,27 @@ def telegram_webhook():
 
 
 @app.route('/api/webhook/setup', methods=['POST'])
+@require_auth
+@require_admin
 def setup_webhook():
-    """Setup Telegram webhook URL (run once after deploy)."""
+    """Point Telegram at this deployment (owner only).
+
+    Sends the same secret the webhook verifies, so re-running this after a
+    deploy keeps payments working. Owner-only: otherwise anyone could redirect
+    the bot's payment updates to their own server.
+    """
     import requests as http_requests
 
     bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
     if not bot_token:
         return jsonify({'error': 'No bot token'}), 500
 
+    secret = _webhook_secret()
+    if not secret:
+        return jsonify({'error': 'Webhook secret not configured'}), 500
+
     # Determine webhook URL from request
-    webhook_url = request.get_json().get('url', '')
+    webhook_url = (request.get_json(silent=True) or {}).get('url', '')
     if not webhook_url:
         return jsonify({'error': 'Missing url in body'}), 400
 
@@ -2113,6 +2234,7 @@ def setup_webhook():
         json={
             'url': webhook_url,
             'allowed_updates': ['message', 'pre_checkout_query'],
+            'secret_token': secret,
         },
         timeout=10,
     )
