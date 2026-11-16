@@ -4218,27 +4218,21 @@ input[type="date"] {
 /* ============================================
    ADMIN EDITOR: SAVE BAR MUST NOT COVER FIELDS
    ============================================ */
-/* Desktop: keep the save bar handy, but reserve space below it so the
-   advanced fields can always scroll clear of the sticky panel. */
-.admin-editor {
-  padding-bottom: 96px;
+/* Keep the save bar in normal flow on every screen. On desktop the sticky
+   bar sat behind the fixed bottom nav (z-index: 200), so the save buttons
+   were invisible; sticky also covered the opened «Дополнительно» fields. */
+#tab-admin .admin-save-bar {
+  position: static;
+  bottom: auto;
+  z-index: auto;
+  box-shadow: none;
+  margin-top: 16px;
 }
 
-/* Mobile: the sticky panel sat above the bottom nav and covered the last
-   rows of «Дополнительно». In normal flow it cannot overlap anything. */
-@media (max-width: 600px) {
-  #tab-admin .admin-save-bar {
-    position: static;
-    bottom: auto;
-    box-shadow: none;
-    margin-top: 16px;
-  }
+#tab-admin .admin-editor {
+  padding-bottom: 0;
+}
 
-  #tab-admin .admin-editor {
-    padding-bottom: 0;
-  }
-
-  #tab-admin .admin-advanced {
-    margin-bottom: 4px;
-  }
+#tab-admin .admin-advanced {
+  margin-bottom: 4px;
 }
