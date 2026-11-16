@@ -1799,8 +1799,11 @@ function normalizeMediaUrl(url) {
   if (value.startsWith('http://zholrules.onrender.com')) {
     value = `https://${value.slice('http://'.length)}`;
   }
-  if (API_BASE && value.startsWith(`${API_BASE}/`)) {
-    value = value.slice(API_BASE.length);
+  // The mini app is also published to GitHub Pages, so relative paths must be
+  // pinned to the API host — otherwise <img src="/api/media/1"> hits the
+  // static host and 404s.
+  if (value.startsWith('/')) {
+    value = `${API_BASE}${value}`;
   }
   return value;
 }
@@ -2171,7 +2174,9 @@ async function handleMediaFile(input) {
     formData.append('file', file);
     const data = await apiUploadForm('/api/upload', formData);
     document.getElementById('admin-media-url').value = data.url;
-    statusEl.textContent = '✅ Файл загружен и сохранён в базе!';
+    statusEl.textContent = data.storage === 'local'
+      ? '⚠️ Файл сохранён на диск сервера — после деплоя он пропадёт!'
+      : '✅ Файл загружен и сохранён в базе!';
     showMediaPreview(data.url, isVideo);
   } catch (e) {
     console.error('Upload failed:', e);

@@ -689,9 +689,11 @@ def upload_media():
     try:
         db.session.add(media)
         db.session.commit()
-        # Relative URL: the app is always served from the same origin, and this
-        # avoids http:// mixed-content blocks inside Telegram's HTTPS WebView.
-        url = f'/api/media/{media.id}'
+        # Absolute URL on the API origin: the mini app is also published to
+        # GitHub Pages, where a relative /api/media/... resolves to the static
+        # host and 404s. ProxyFix makes url_root https, so Telegram's HTTPS
+        # WebView does not block this as mixed content.
+        url = request.url_root.rstrip('/') + f'/api/media/{media.id}'
         logger.info(
             f'Media stored in DB: id={media.id} name={media.filename} '
             f'size={media.size} type={media.mimetype}'
@@ -711,7 +713,7 @@ def upload_media():
     filename = uuid.uuid4().hex + ext
     with open(os.path.join(MEDIA_FOLDER, filename), 'wb') as fh:
         fh.write(raw)
-    url = f'/uploads/{filename}'
+    url = request.url_root.rstrip('/') + f'/uploads/{filename}'
     logger.warning(f'Media saved locally (not durable): {filename}')
     return jsonify({
         'url': url,
