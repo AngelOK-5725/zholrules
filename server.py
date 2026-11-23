@@ -1341,8 +1341,10 @@ def _bird_payload(user, stats):
         'bonus_games': bonus,
         'total_games_left': (999 if unlimited else max(0, limit - played) + bonus),
         'is_pro': is_pro(user),
+        # Pro/owner differ from the free plan only in attempts: hearts are
+        # always three per run for everyone.
         'unlimited': unlimited,
-        'unlimited_lives': unlimited,
+        'unlimited_lives': False,
         'revive_available': (not unlimited) and (ad_unlimited or (stats.bird_rewards_today or 0) < ad_max),
         'ad_rewards_left': None if ad_unlimited else max(0, ad_max - (stats.bird_rewards_today or 0)),
         'ad_reward_max': ad_max,

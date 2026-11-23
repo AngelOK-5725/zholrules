@@ -3479,7 +3479,7 @@ function renderBirdStatus() {
   const quota = document.getElementById('bird-quota');
   if (quota) {
     if (s.unlimited) {
-      quota.textContent = '👑 Без лимитов';
+      quota.textContent = '👑 Pro: попытки без ограничений';
     } else {
       const left = Math.max(0, s.total_games_left ?? 0);
       quota.textContent = left > 0
@@ -3502,14 +3502,11 @@ function renderBirdStatus() {
     overAd.textContent = `🎬 Реклама +1 игра${adUnlimited ? '' : ` (${adLeft})`}`;
   }
 
-  const finishBtn = document.getElementById('bird-finish-btn');
-  if (finishBtn) finishBtn.style.display = s.unlimited ? '' : 'none';
-
   const rules = document.getElementById('bird-rules-text');
   if (rules) {
     rules.textContent = s.unlimited
-      ? '👑 Pro: без рекламы, дневных лимитов и с бесконечными жизнями. Столкновения и ошибки не завершают забег — нажми 🏁, когда захочешь закончить.'
-      : 'Пролети от 4 до 11 препятствий, затем ответь на вопрос из базы. 3 жизни: столкновение, неверный ответ или истёкшее время забирают одну. Когда жизни закончатся, можно посмотреть рекламу и продолжить.';
+      ? '👑 Pro: рекламы и дневных лимитов нет — начинай заново сколько захочешь. Правила те же, что и у всех: 3 сердца, столкновение, неверный ответ или истёкшее время забирают одно, после третьего забег заканчивается и показывается результат с рекордом.'
+      : 'Пролети от 4 до 11 препятствий, затем ответь на вопрос из базы. 3 сердца: столкновение, неверный ответ или истёкшее время забирают одно. Когда сердца закончатся, покажем результат и рекорд — можно посмотреть рекламу и поиграть ещё.';
   }
 }
 
@@ -3734,23 +3731,20 @@ function birdHit() {
   const now = performance.now();
   if (st.invulnUntil > now) return;
 
-  const unlimited = !!BIRD.status?.unlimited;
-  if (!unlimited) st.lives -= 1;
+  // Hearts are the same for every plan (Pro included): three per run.
+  st.lives -= 1;
   st.flashUntil = now + 420;
   birdHaptic('heavy');
   updateBirdHud();
 
-  if (!unlimited && st.lives <= 0) {
+  if (st.lives <= 0) {
     birdGameOver();
     return;
   }
 
-  st.invulnUntil = now + (unlimited ? 1200 : 1500);
+  st.invulnUntil = now + 1500;
   st.y = BIRD.H * 0.42;
   st.vy = 0;
-
-  // Pro: lives are unlimited, so a collision only gives a short shield.
-  if (unlimited) return;
 
   st.pipes = [];
   st.roundPassed = 0;
@@ -3919,7 +3913,7 @@ function resolveBirdAnswer(index) {
     feedback.className = 'bird-q-feedback is-correct';
     birdHaptic('success');
   } else {
-    if (!BIRD.status?.unlimited) st.lives -= 1;
+    st.lives -= 1;
     feedback.textContent = index < 0
       ? `⏰ Время вышло. Правильный ответ: ${correctText}`
       : `❌ Неверно. Правильный ответ: ${correctText}`;
@@ -3938,7 +3932,7 @@ function resolveBirdAnswer(index) {
 
     if (isCorrect) {
       birdResumeRound();
-    } else if (!BIRD.status?.unlimited && st.lives <= 0) {
+    } else if (st.lives <= 0) {
       birdGameOver();
     } else {
       st.pipes = [];
@@ -4012,10 +4006,10 @@ async function birdGameOver() {
   }
   await refreshBirdStatus();
 
-  // Free plan: offer a rewarded revive right when all lives are spent.
-  if (BIRD.state === st && !BIRD.status?.unlimited && BIRD.status?.revive_available) {
-    openBirdReviveModal();
-  }
+  // The result screen stays on top: it already carries the «watch an ad for
+  // another attempt» offer for the free plan. Pro restarts without ads.
+  renderBirdStatus();
+  if (BIRD.ctx) drawBirdFrame();
 }
 
 function closeBirdGame() {
@@ -4029,7 +4023,6 @@ function closeBirdGame() {
 }
 
 function birdLivesText(lives) {
-  if (BIRD.status?.unlimited) return '👑 ∞';
   return '❤️'.repeat(Math.max(0, lives)) + '🖤'.repeat(Math.max(0, BIRD_MAX_LIVES - lives));
 }
 
@@ -4038,8 +4031,6 @@ function updateBirdHud() {
   const lives = st ? st.lives : BIRD_MAX_LIVES;
   const livesEl = document.getElementById('bird-lives');
   if (livesEl) livesEl.textContent = birdLivesText(lives);
-  const finishBtn = document.getElementById('bird-finish-btn');
-  if (finishBtn) finishBtn.style.display = BIRD.status?.unlimited ? '' : 'none';
   const target = st ? st.target : 0;
   const textEl = document.getElementById('bird-progress-text');
   if (textEl) textEl.textContent = st ? `${st.roundPassed} / ${target}` : '—';
@@ -4186,14 +4177,6 @@ function birdRevive() {
   updateBirdHud();
   birdStartLoop();
   birdHaptic('success');
-}
-
-function finishBirdRun() {
-  if (!BIRD.status?.unlimited) return;
-  const st = BIRD.state;
-  if (!st || !st.running) return;
-  st.lives = 0;
-  birdGameOver();
 }
 
 function openBirdLimitModal() {
