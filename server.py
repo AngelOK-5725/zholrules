@@ -107,6 +107,17 @@ def _owner_id() -> int:
         return 0
 
 
+def _is_owner(user) -> bool:
+    """True when this user is the owner.
+
+    Compares the Telegram id with the env value instead of trusting the cached
+    ``users.is_admin`` column, which is only refreshed by /api/user and could be
+    stale for someone who reached the game endpoints first.
+    """
+    owner = _owner_id()
+    return bool(owner) and bool(user) and user.tg_id == owner
+
+
 def _safe_json(raw, default, expect=None):
     """Parse JSON held in the database without dying on a corrupted row.
 
@@ -1329,7 +1340,7 @@ def _bird_payload(user, stats):
     ad_unlimited = ad_max <= 0  # 0 in admin settings means unlimited ad rewards
     played = stats.bird_games_played or 0
     bonus = stats.bird_bonus_games or 0
-    unlimited = is_pro(user) or bool(user.is_admin)
+    unlimited = is_pro(user) or bool(user.is_admin) or _is_owner(user)
     ost_min = _bird_int_setting('bird_obstacles_min', 4)
     ost_max = _bird_int_setting('bird_obstacles_max', 11)
     if ost_max < ost_min:
@@ -1450,7 +1461,7 @@ def bird_revive():
     _bird_reset_daily(stats)
 
     # Pro/owner do not watch ads at all.
-    if is_pro(user) or user.is_admin:
+    if is_pro(user) or user.is_admin or _is_owner(user):
         db.session.commit()
         payload = _bird_payload(user, stats)
         payload['allowed'] = True
