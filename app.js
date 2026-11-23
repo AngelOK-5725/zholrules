@@ -217,10 +217,12 @@ function renderSubscriptionCard() {
       </div>
     `;
   } else {
-    const remaining = sub.errors_remaining ?? '∞';
-    const errorCount = sub.error_count || 0;
-    const limit = sub.error_limit || 10;
-    const pct = Math.min(100, Math.round((errorCount / limit) * 100));
+    // Free plan is capped by daily test runs, not by saved errors.
+    const quota = sub.quiz_quota || {};
+    const qLimit = quota.limit ?? 5;
+    const qUsed = quota.used_today ?? 0;
+    const qLeft = Math.max(0, qLimit - qUsed);
+    const pct = Math.min(100, Math.round((qUsed / qLimit) * 100));
     const warnClass = pct >= 80 ? 'sub-warn' : '';
 
     // Check for discount
@@ -237,10 +239,11 @@ function renderSubscriptionCard() {
     container.innerHTML = `
       <div class="sub-card sub-free ${warnClass}">
         <div class="sub-header">📋 Бесплатный план</div>
-        <p>Ошибок: <strong>${errorCount}/${limit}</strong> (${remaining} осталось)</p>
+        <p>Тестов сегодня: <strong>${qUsed} / ${qLimit}</strong> (осталось ${qLeft})</p>
         <div class="sub-progress-bar">
           <div class="sub-progress-fill" style="width: ${pct}%; background: ${pct >= 80 ? 'var(--red)' : 'var(--primary)'};"></div>
         </div>
+        <p class="sub-note">Ошибки сохраняются без ограничений. Flippy Bird и Спринт в лимит не входят.</p>
         ${proAvailable ? `
           <button class="btn btn-primary" style="margin-top:12px;width:100%;" onclick="buyProWithStars()">
             ${priceText}
@@ -324,6 +327,9 @@ let appSettings = {
   bird_question_seconds: 15,
   bird_ad_reward_max: 5,
   bird_ad_duration: 5,
+  exam_questions: 40,
+  exam_time_minutes: 40,
+  free_quiz_sessions: 5,
 };
 
 async function loadPublicSettings() {
@@ -372,6 +378,7 @@ let state = {
 
 let questionsData = null; // Loaded from JSON
 let quizState = null;    // Current quiz session
+let timerInterval = null; // Exam countdown
 let gameState = null;    // Current mini-game session
 
 // ============================================
@@ -413,6 +420,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Flippy Bird daily quota (owner / Pro are unlimited)
   refreshBirdStatus();
+
+  // Daily test-run quota for the free plan (bird and sprint do not count)
+  refreshQuizQuota();
 
   // Show splash, then main app
   showSplash();
@@ -1012,12 +1022,60 @@ async function submitAnswerToServer(questionId, selectedOptions) {
 // ============================================
 // QUIZ ENGINE
 // ============================================
-function startQuiz(mode, categoryId) {
+// Free plan: N test runs per day. Flippy Bird and Sprint never call this.
+let quizQuota = null;
+
+async function refreshQuizQuota() {
+  try {
+    quizQuota = await apiGet('/api/quiz/status');
+  } catch (e) {
+    // Offline / dev without server: keep the last known value.
+  }
+  return quizQuota;
+}
+
+async function ensureQuizAttempt() {
+  try {
+    quizQuota = await apiPost('/api/quiz/start', {});
+    return true;
+  } catch (e) {
+    if (e.status === 402) {
+      quizQuota = { ...(quizQuota || {}), ...(e.data || {}) };
+      openQuizLimitModal();
+      return false;
+    }
+    // A network problem must not lock the player out of their tests.
+    return true;
+  }
+}
+
+function openQuizLimitModal() {
+  const q = quizQuota || {};
+  const text = document.getElementById('quiz-limit-text');
+  if (text) {
+    text.textContent = `Бесплатный тариф: ${q.limit ?? 5} тестов в день. Сегодня пройдено: ${q.used_today ?? (q.limit ?? 5)}. `
+      + 'С Flippy Bird и Спринтом — без ограничений по попыткам. Pro снимает лимит на тесты.';
+  }
+  const modal = document.getElementById('quiz-limit-modal');
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeQuizLimitModal() {
+  const modal = document.getElementById('quiz-limit-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function startQuiz(mode, categoryId) {
   if (mode === 'errors') {
     if (state.errors.length === 0) {
       alert('У вас пока нет ошибок! Сначала пройдите тест.');
       return;
     }
+  }
+
+  if (!(await ensureQuizAttempt())) return;
+
+  if (mode === 'errors') {
     quizState = createQuizSession(
       questionsData.questions.filter(q => state.errors.includes(q.id)),
       'errors'
@@ -1034,15 +1092,30 @@ function startQuiz(mode, categoryId) {
   showQuizScreen();
 }
 
-// Random over every question in the system: no timer, no size limit, any
-// number of mistakes — it replaces the old СпецЦОН exam mode.
-function startAllQuestions() {
+// Random over every question in the system: no timer, any number of mistakes.
+async function startAllQuestions() {
   if (!questionsData?.questions?.length) {
     toast('В базе пока нет вопросов', 'error');
     return;
   }
+  if (!(await ensureQuizAttempt())) return;
   const shuffled = shuffleArray([...questionsData.questions]);
   quizState = createQuizSession(shuffled, 'all');
+  showQuizScreen();
+}
+
+// СпецЦОН-style exam: 40 random questions from the base, 40 minutes.
+async function startExam() {
+  // Check lives (owner has unlimited)
+  if (state.stats.lives <= 0 && !state.user.isAdmin) {
+    showPaymentModal();
+    return;
+  }
+  if (!(await ensureQuizAttempt())) return;
+
+  const shuffled = shuffleArray([...questionsData.questions]);
+  const examSize = parseInt(appSettings.exam_questions, 10) || 40;
+  quizState = createQuizSession(shuffled.slice(0, examSize), 'exam');
   showQuizScreen();
 }
 
@@ -1056,6 +1129,7 @@ function createQuizSession(questions, mode, categoryId) {
     wrongCount: 0,
     answered: false,
     selectedOptions: [],
+    timeRemaining: mode === 'exam' ? (parseInt(appSettings.exam_time_minutes, 10) || 40) * 60 : null,
     startTime: Date.now(),
   };
 }
@@ -1063,6 +1137,17 @@ function createQuizSession(questions, mode, categoryId) {
 function showQuizScreen() {
   const screen = document.getElementById('quiz-screen');
   screen.classList.add('active');
+
+  // Timer only for the exam mode
+  const timerEl = document.getElementById('quiz-timer');
+  if (timerEl) {
+    if (quizState.mode === 'exam') {
+      timerEl.style.display = 'flex';
+      startExamTimer();
+    } else {
+      timerEl.style.display = 'none';
+    }
+  }
 
   // Reset result
   document.getElementById('quiz-result').style.display = 'none';
@@ -1175,14 +1260,6 @@ function checkAnswer() {
 
   const isCorrect = JSON.stringify(selected) === JSON.stringify(correct);
 
-  // Free plan: once the saved-errors limit is reached, a wrong answer is still
-  // counted and revealed — it just is not saved. It used to return early here,
-  // which made the question unanswerable: the banner went into a missing
-  // #quiz-area, so clicks on wrong options did nothing at all.
-  const errorLimit = state.subscription?.error_limit || 10;
-  const errorCount = state.subscription?.error_count || state.errors.length;
-  const errorLimitReached = !isCorrect && !state.subscription?.is_pro &&
-    errorCount >= errorLimit && !state.errors.includes(q.id);
 
   // Sync answer to server (analytics + error limits), fire-and-forget
   submitAnswerToServer(q.id, quizState.selectedOptions);
@@ -1255,14 +1332,6 @@ function checkAnswer() {
     explanationEl.style.display = 'block';
   }
 
-  if (errorLimitReached) {
-    toast(
-      `Лимит ошибок (${errorLimit}) на бесплатном плане: ответ засчитан, но ошибка не сохранится. Pro — без лимита.`,
-      'info',
-      4000
-    );
-  }
-
   // Enable next button
   document.getElementById('next-btn').disabled = false;
 
@@ -1288,15 +1357,25 @@ function nextQuestion() {
 }
 
 function endQuiz(completed) {
+  if (timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
+
   // Hide quiz content
   document.querySelector('.quiz-content').style.display = 'none';
   document.getElementById('quiz-footer').style.display = 'none';
+  const quizTimerEl = document.getElementById('quiz-timer');
+  if (quizTimerEl) quizTimerEl.style.display = 'none';
 
   // Calculate results
   const total = quizState.questions.length;
   const correct = quizState.correctCount;
   const wrong = total - correct;
   const pct = Math.round((correct / total) * 100);
+
+  // The free plan gets a fresh set of runs tomorrow.
+  if (!quizQuota?.unlimited) refreshQuizQuota();
 
   // Show result
   const resultEl = document.getElementById('quiz-result');
@@ -1310,7 +1389,21 @@ function endQuiz(completed) {
   let message = '';
   let messageBg = '';
 
-  if (pct >= 90) {
+  if (quizState.mode === 'exam') {
+    if (quizState.wrongCount <= 3) {
+      emoji = '🏆';
+      message = 'Превосходно! Вы готовы к экзамену!';
+      messageBg = 'var(--emerald-light)';
+    } else if (quizState.wrongCount <= 5) {
+      emoji = '👏';
+      message = 'Хороший результат! Ещё немного практики.';
+      messageBg = 'var(--amber-light)';
+    } else {
+      emoji = '📚';
+      message = 'Нужно повторить материал. Не сдавайтесь!';
+      messageBg = 'var(--red-light)';
+    }
+  } else if (pct >= 90) {
     emoji = '🏆';
     message = 'Отличный результат!';
     messageBg = 'var(--emerald-light)';
@@ -1325,13 +1418,18 @@ function endQuiz(completed) {
   }
 
   document.getElementById('result-emoji').textContent = emoji;
-  document.getElementById('result-title').textContent = completed ? 'Результат' : 'Тест прерван';
+  document.getElementById('result-title').textContent = completed ? 'Результат' : 'Экзамен не пройден';
   const msgEl = document.getElementById('result-message');
   msgEl.textContent = message;
   msgEl.style.background = messageBg;
 }
 
 function exitQuiz() {
+  if (timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
+
   document.getElementById('quiz-screen').classList.remove('active');
   quizState = null;
   updateUI();
@@ -1343,7 +1441,9 @@ function retryQuiz() {
     const catId = quizState.categoryId;
     exitQuiz();
     setTimeout(() => {
-      if (mode === 'all') {
+      if (mode === 'exam') {
+        startExam();
+      } else if (mode === 'all') {
         startAllQuestions();
       } else if (mode === 'topic' && catId) {
         startQuiz('topic', catId);
@@ -1353,6 +1453,40 @@ function retryQuiz() {
         startQuiz('random');
       }
     }, 100);
+  }
+}
+
+// ============================================
+// EXAM TIMER
+// ============================================
+function startExamTimer() {
+  updateTimerDisplay();
+
+  timerInterval = setInterval(() => {
+    quizState.timeRemaining--;
+
+    if (quizState.timeRemaining <= 0) {
+      clearInterval(timerInterval);
+      timerInterval = null;
+      endQuiz(true);
+      return;
+    }
+
+    updateTimerDisplay();
+  }, 1000);
+}
+
+function updateTimerDisplay() {
+  const minutes = Math.floor(quizState.timeRemaining / 60);
+  const seconds = quizState.timeRemaining % 60;
+  const display = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  document.getElementById('timer-display').textContent = display;
+
+  const timerEl = document.getElementById('quiz-timer');
+  if (quizState.timeRemaining <= 300) {
+    timerEl.classList.add('urgent');
+  } else {
+    timerEl.classList.remove('urgent');
   }
 }
 
@@ -2901,7 +3035,9 @@ function renderSettingsForm(settings) {
 
   const settingLabels = {
     'pro_stars_price': '⭐ Цена Pro подписки (Stars)',
-    'free_error_limit': '📝 Лимит ошибок (бесплатный план)',
+    'free_quiz_sessions': '📝 Тестов в день (бесплатный план)',
+    'exam_questions': '📋 Вопросов в экзамене',
+    'exam_time_minutes': '⏱️ Время экзамена (мин)',
     'max_daily_lives': '❤️ Жизни в день',
     'daily_questions_target': '🎯 Цель вопросов в день',
     'mini_game_duration': '🎮 Длительность мини-игры (сек)',
@@ -2922,13 +3058,13 @@ function renderSettingsForm(settings) {
   };
 
   const boolKeys = ['free_plan_enabled', 'pro_plan_enabled', 'discount_enabled'];
-  // Settings that belonged to the removed exam mode.
-  const retiredKeys = ['exam_questions', 'exam_time_minutes'];
+  // The error cap is gone: the free plan is limited by daily test runs now.
+  const retiredKeys = ['free_error_limit'];
 
   container.innerHTML = settings.filter(s => !retiredKeys.includes(s.key)).map(s => {
     const label = settingLabels[s.key] || s.key;
     const isBool = boolKeys.includes(s.key);
-    const isNumber = ['pro_stars_price', 'pro_duration_days', 'free_error_limit', 'max_daily_lives', 'daily_questions_target', 'mini_game_duration', 'lives_stars_price', 'discount_percent', 'discount_price', 'free_bird_games', 'bird_obstacles_min', 'bird_obstacles_max', 'bird_question_seconds', 'bird_ad_reward_max', 'bird_ad_duration'].includes(s.key);
+    const isNumber = ['pro_stars_price', 'pro_duration_days', 'free_quiz_sessions', 'max_daily_lives', 'daily_questions_target', 'mini_game_duration', 'exam_questions', 'exam_time_minutes', 'lives_stars_price', 'discount_percent', 'discount_price', 'free_bird_games', 'bird_obstacles_min', 'bird_obstacles_max', 'bird_question_seconds', 'bird_ad_reward_max', 'bird_ad_duration'].includes(s.key);
 
     if (isBool) {
       return `

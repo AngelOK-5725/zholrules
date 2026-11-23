@@ -200,6 +200,32 @@ def sync_id_sequences():
                 logger.warning(f'Sequence sync skipped for {table}: {e}')
 
 
+def ensure_quiz_columns():
+    """Add the daily quiz-run counter to an existing user_stats table."""
+    is_sqlite = db.engine.dialect.name == 'sqlite'
+    columns = (
+        ('quiz_sessions_date', "ALTER TABLE user_stats ADD COLUMN quiz_sessions_date VARCHAR(10) DEFAULT ''"),
+        ('quiz_sessions_played', 'ALTER TABLE user_stats ADD COLUMN quiz_sessions_played INTEGER DEFAULT 0'),
+    )
+
+    with db.engine.connect() as conn:
+        if is_sqlite:
+            existing = {row[1] for row in conn.execute(db.text('PRAGMA table_info(user_stats)'))}
+        else:
+            existing = set()
+
+        for col, ddl in columns:
+            if is_sqlite and col in existing:
+                continue
+            statement = ddl if is_sqlite else ddl.replace('ADD COLUMN', 'ADD COLUMN IF NOT EXISTS')
+            try:
+                conn.execute(db.text(statement))
+                conn.commit()
+                logger.info(f'Added user_stats.{col}')
+            except Exception as e:
+                logger.warning(f'Could not add user_stats.{col}: {e}')
+
+
 def ensure_bird_columns():
     """Add Flippy Bird limit columns to an existing user_stats table."""
     is_sqlite = db.engine.dialect.name == 'sqlite'
@@ -370,6 +396,9 @@ class UserStats(db.Model):
     bird_bonus_games = db.Column(db.Integer, default=0)
     bird_rewards_date = db.Column(db.String(10), default='')
     bird_rewards_today = db.Column(db.Integer, default=0)
+    # Free plan: how many test runs were started today (bird/sprint excluded)
+    quiz_sessions_date = db.Column(db.String(10), default='')
+    quiz_sessions_played = db.Column(db.Integer, default=0)
 
     def to_dict(self):
         return {
@@ -382,6 +411,7 @@ class UserStats(db.Model):
             'game_high_score': self.game_high_score,
             'bird_games_played': self.bird_games_played,
             'bird_bonus_games': self.bird_bonus_games,
+            'quiz_sessions_played': self.quiz_sessions_played,
         }
 
 
@@ -890,6 +920,7 @@ def get_user():
             'pro_duration_days': duration_days,
             'discount_active': discount_active,
             'discount_percent': discount_percent if discount_active else 0,
+            'quiz_quota': _quiz_payload(user, _ensure_stats(user)) if user.stats else None,
         },
     })
 
@@ -1311,12 +1342,16 @@ def _bird_int_setting(key, default):
         return default
 
 
-def _bird_stats(user):
+def _ensure_stats(user):
     stats = user.stats
     if not stats:
         stats = UserStats(user_id=user.id)
         db.session.add(stats)
     return stats
+
+
+def _bird_stats(user):
+    return _ensure_stats(user)
 
 
 def _bird_reset_daily(stats):
@@ -1513,6 +1548,80 @@ def bird_finish():
 
 
 # ============================================
+# API: QUIZ DAILY LIMIT (free plan: N test runs per day)
+# ============================================
+def _quiz_int_setting(key, default):
+    try:
+        return int(get_setting(key, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _quiz_reset_daily(stats):
+    """Reset the per-day test counter when the date changes."""
+    today = date.today().isoformat()
+    if stats.quiz_sessions_date != today:
+        stats.quiz_sessions_date = today
+        stats.quiz_sessions_played = 0
+
+
+def _quiz_payload(user, stats):
+    limit = _quiz_int_setting('free_quiz_sessions', 5)
+    used = stats.quiz_sessions_played or 0
+    unlimited = is_pro(user) or bool(user.is_admin) or _is_owner(user)
+    return {
+        'limit': limit,
+        'used_today': used,
+        'left': None if unlimited else max(0, limit - used),
+        'unlimited': unlimited,
+        'is_pro': is_pro(user),
+    }
+
+
+def _quiz_current_user():
+    return User.query.filter_by(tg_id=request.tg_user['id']).first()
+
+
+@app.route('/api/quiz/status', methods=['GET'])
+@require_auth
+def quiz_quota_status():
+    """How many test runs the user has left today."""
+    user = _quiz_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    stats = _ensure_stats(user)
+    _quiz_reset_daily(stats)
+    db.session.commit()
+    return jsonify(_quiz_payload(user, stats))
+
+
+@app.route('/api/quiz/start', methods=['POST'])
+@require_auth
+def quiz_quota_start():
+    """Consume one test run. Flippy Bird and Sprint do not call this."""
+    user = _quiz_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    stats = _ensure_stats(user)
+    _quiz_reset_daily(stats)
+
+    payload = _quiz_payload(user, stats)
+    if not payload['unlimited']:
+        if (stats.quiz_sessions_played or 0) >= payload['limit']:
+            db.session.commit()
+            payload = _quiz_payload(user, stats)
+            payload['allowed'] = False
+            payload['reason'] = 'daily_limit'
+            return jsonify(payload), 402
+        stats.quiz_sessions_played = (stats.quiz_sessions_played or 0) + 1
+
+    db.session.commit()
+    payload = _quiz_payload(user, stats)
+    payload['allowed'] = True
+    return jsonify(payload)
+
+
+# ============================================
 # API: CATEGORIES
 # ============================================
 @app.route('/api/categories', methods=['GET'])
@@ -1688,6 +1797,7 @@ DEFAULT_SETTINGS = {
     'pro_stars_price': {'value': '1500', 'description': 'Цена Pro подписки в Telegram Stars'},
     'pro_duration_days': {'value': '30', 'description': 'Срок Pro подписки в днях'},
     'free_error_limit': {'value': '10', 'description': 'Максимум ошибок для бесплатного плана'},
+    'free_quiz_sessions': {'value': '5', 'description': 'Сколько тестов в день можно пройти на бесплатном плане'},
     'max_daily_lives': {'value': '3', 'description': 'Количество жизней в день'},
     'daily_questions_target': {'value': '10', 'description': 'Цель по вопросам в день'},
     'exam_questions': {'value': '40', 'description': 'Количество вопросов в экзамене'},
@@ -1844,15 +1954,12 @@ def is_pro(user):
 
 
 def get_error_limit(user):
-    """Return error limit for user. None = unlimited."""
-    if is_pro(user):
-        return None  # unlimited
-    # Read from settings DB
-    limit_str = get_setting('free_error_limit', '10')
-    try:
-        return int(limit_str)
-    except (ValueError, TypeError):
-        return 10
+    """Return error limit for user. None = unlimited.
+
+    Errors are not capped any more: the free plan is limited by daily test
+    runs instead, which is easier to understand and to control.
+    """
+    return None
 
 
 # ============================================
@@ -2358,6 +2465,7 @@ def init_db():
         db.create_all()
         ensure_question_columns()
         ensure_bird_columns()
+        ensure_quiz_columns()
 
         # Seed default categories if empty
         if Category.query.count() == 0:

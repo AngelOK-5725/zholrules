@@ -98,10 +98,10 @@
 
       <!-- Quick Actions -->
       <div class="quick-actions">
-        <button class="quick-action" onclick="startAllQuestions()">
-          <span class="quick-action-icon">🎲</span>
-          <span class="quick-action-title">Рандом</span>
-          <span class="quick-action-desc">Все вопросы</span>
+        <button class="quick-action" onclick="startExam()">
+          <span class="quick-action-icon">📝</span>
+          <span class="quick-action-title">Экзамен</span>
+          <span class="quick-action-desc">40 вопросов</span>
         </button>
         <button class="quick-action" onclick="switchTab('study')">
           <span class="quick-action-icon">🚦</span>
@@ -166,6 +166,11 @@
           <div class="mode-icon">🎲</div>
           <div class="mode-title">Случайный микс</div>
           <div class="mode-desc">20 вопросов</div>
+        </div>
+        <div class="mode-card" onclick="startExam()">
+          <div class="mode-icon">🏛️</div>
+          <div class="mode-title">Как в СпецЦОНе</div>
+          <div class="mode-desc">40 вопросов, 40 мин</div>
         </div>
         <div class="mode-card" onclick="startAllQuestions()">
           <div class="mode-icon">🎲</div>
@@ -260,7 +265,7 @@
             <div class="game-combo" id="game-combo" style="display:none;">x1</div>
           </div>
           <div class="game-area" id="game-area">
-            <div class="game-placeholder">
+            <div class="game-placeholder" id="game-placeholder">
               <div class="game-placeholder-icon">🏎️</div>
               <h3>Дорожный Спринт</h3>
               <p>60 секунд быстрых вопросов. Зарабатывай комбо за правильные ответы!</p>
@@ -677,6 +682,11 @@
       <span class="quiz-counter" id="quiz-counter">1 / 20</span>
     </div>
 
+    <div class="quiz-timer" id="quiz-timer" style="display:none;">
+      <span class="timer-icon">⏱️</span>
+      <span id="timer-display">40:00</span>
+    </div>
+
     <div class="quiz-content">
       <div class="quiz-question" id="quiz-question">
         <div class="quiz-question-text" id="quiz-question-text"></div>
@@ -799,6 +809,18 @@
   </div>
 
 
+
+  <!-- Free plan: daily test-run limit -->
+  <div id="quiz-limit-modal" class="modal" style="display:none;">
+    <div class="modal-content bird-limit-card">
+      <div class="bird-limit-icon">📝</div>
+      <h3>Тесты на сегодня закончились</h3>
+      <p id="quiz-limit-text">Бесплатный тариф: 5 тестов в день.</p>
+      <button class="btn btn-primary" onclick="showPaymentModal();closeQuizLimitModal()">💎 Pro — без ограничений</button>
+      <button class="btn btn-secondary" onclick="closeQuizLimitModal()">Позже</button>
+      <p class="bird-ad-note">Лимит обновляется каждый день. Flippy Bird и Спринт за 60 секунд можно проходить без ограничений.</p>
+    </div>
+  </div>
 
   <!-- Payment Modal -->
   <div id="payment-modal" class="modal" style="display:none;">
