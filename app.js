@@ -309,8 +309,6 @@ const QUESTIONS_PER_MIX = 20;
 
 // Gameplay settings — defaults; overridden from /api/settings/public (no-code)
 let appSettings = {
-  exam_questions: 40,
-  exam_time_minutes: 40,
   mini_game_duration: 60,
   daily_questions_target: 10,
   max_daily_lives: 3,
@@ -375,7 +373,6 @@ let state = {
 let questionsData = null; // Loaded from JSON
 let quizState = null;    // Current quiz session
 let gameState = null;    // Current mini-game session
-let timerInterval = null;
 
 // ============================================
 // INITIALIZATION
@@ -1037,16 +1034,15 @@ function startQuiz(mode, categoryId) {
   showQuizScreen();
 }
 
-function startExam() {
-  // Check lives (owner has unlimited)
-  if (state.stats.lives <= 0 && !state.user.isAdmin) {
-    showPaymentModal();
+// Random over every question in the system: no timer, no size limit, any
+// number of mistakes — it replaces the old СпецЦОН exam mode.
+function startAllQuestions() {
+  if (!questionsData?.questions?.length) {
+    toast('В базе пока нет вопросов', 'error');
     return;
   }
-
   const shuffled = shuffleArray([...questionsData.questions]);
-  const examSize = parseInt(appSettings.exam_questions, 10) || 40;
-  quizState = createQuizSession(shuffled.slice(0, examSize), 'exam');
+  quizState = createQuizSession(shuffled, 'all');
   showQuizScreen();
 }
 
@@ -1060,7 +1056,6 @@ function createQuizSession(questions, mode, categoryId) {
     wrongCount: 0,
     answered: false,
     selectedOptions: [],
-    timeRemaining: mode === 'exam' ? (parseInt(appSettings.exam_time_minutes, 10) || 40) * 60 : null,
     startTime: Date.now(),
   };
 }
@@ -1068,15 +1063,6 @@ function createQuizSession(questions, mode, categoryId) {
 function showQuizScreen() {
   const screen = document.getElementById('quiz-screen');
   screen.classList.add('active');
-
-  // Show timer for exam mode
-  const timerEl = document.getElementById('quiz-timer');
-  if (quizState.mode === 'exam') {
-    timerEl.style.display = 'flex';
-    startExamTimer();
-  } else {
-    timerEl.style.display = 'none';
-  }
 
   // Reset result
   document.getElementById('quiz-result').style.display = 'none';
@@ -1183,35 +1169,20 @@ function checkAnswer() {
 
 
   const q = quizState.questions[quizState.currentIndex];
-  const selected = quizState.selectedOptions.sort();
-  const correct = [...q.correct_options].sort();
+  // Numeric sort: the default one compares strings, so index 10 landed before 2.
+  const selected = [...quizState.selectedOptions].sort((a, b) => a - b);
+  const correct = [...q.correct_options].sort((a, b) => a - b);
 
   const isCorrect = JSON.stringify(selected) === JSON.stringify(correct);
 
-  // Check error limit for free plan
-  if (!isCorrect && !state.subscription?.is_pro) {
-    const errorLimit = state.subscription?.error_limit || 10;
-    const errorCount = state.subscription?.error_count || state.errors.length;
-    if (errorCount >= errorLimit && !state.errors.includes(q.id)) {
-      // Show limit reached message
-      const quizArea = document.getElementById('quiz-area');
-      if (quizArea) {
-        const limitDiv = document.createElement('div');
-        limitDiv.className = 'error-limit-message';
-        limitDiv.innerHTML = `
-          <div style="text-align:center;padding:24px;">
-            <div style="font-size:48px;margin-bottom:16px;">🚫</div>
-            <h3 style="margin-bottom:8px;">Лимит ошибок</h3>
-            <p style="color:var(--tg-theme-hint-color);margin-bottom:16px;">Бесплатный план: ${errorLimit} ошибок. Купите Pro для безлимитного доступа!</p>
-            <button class="btn btn-primary" onclick="buyProWithStars()">⭐ Купить Pro</button>
-          </div>
-        `;
-        quizArea.appendChild(limitDiv);
-      }
-      quizState.answered = false; // allow retry
-      return;
-    }
-  }
+  // Free plan: once the saved-errors limit is reached, a wrong answer is still
+  // counted and revealed — it just is not saved. It used to return early here,
+  // which made the question unanswerable: the banner went into a missing
+  // #quiz-area, so clicks on wrong options did nothing at all.
+  const errorLimit = state.subscription?.error_limit || 10;
+  const errorCount = state.subscription?.error_count || state.errors.length;
+  const errorLimitReached = !isCorrect && !state.subscription?.is_pro &&
+    errorCount >= errorLimit && !state.errors.includes(q.id);
 
   // Sync answer to server (analytics + error limits), fire-and-forget
   submitAnswerToServer(q.id, quizState.selectedOptions);
@@ -1260,37 +1231,6 @@ function checkAnswer() {
       }
     }
 
-    // Deduct life in exam mode (Pro users have unlimited lives)
-    if (quizState.mode === 'exam') {
-      quizState.wrongCount++;
-
-      // Only non-Pro users lose lives
-      const isOwner = state.user.isAdmin;
-      if (!state.subscription?.is_pro && !isOwner && state.stats.lives > 0) {
-        state.stats.lives--;
-        updateUI();
-
-        // BLOCK: no more lives → stop exam
-        if (state.stats.lives <= 0) {
-          saveState();
-          setTimeout(() => {
-            alert('🚫 Жизни закончились!\n\nКупите Pro для безлимитных жизней или докупите жизни.');
-            showPaymentModal();
-          }, 500);
-          return;
-        }
-
-        // Warn when low
-        if (state.stats.lives === 1) {
-          alert('⚠️ Осталась 1 жизнь! Купите Pro для безлимитных жизней.');
-        }
-      }
-
-      if (quizState.wrongCount > 8) {
-        endQuiz(false);
-        return;
-      }
-    }
   }
 
   // Streak is updated by the server in /api/answer.
@@ -1313,6 +1253,14 @@ function checkAnswer() {
   if (q.explanation) {
     explanationText.textContent = q.explanation;
     explanationEl.style.display = 'block';
+  }
+
+  if (errorLimitReached) {
+    toast(
+      `Лимит ошибок (${errorLimit}) на бесплатном плане: ответ засчитан, но ошибка не сохранится. Pro — без лимита.`,
+      'info',
+      4000
+    );
   }
 
   // Enable next button
@@ -1340,16 +1288,9 @@ function nextQuestion() {
 }
 
 function endQuiz(completed) {
-  // Clear timer
-  if (timerInterval) {
-    clearInterval(timerInterval);
-    timerInterval = null;
-  }
-
   // Hide quiz content
   document.querySelector('.quiz-content').style.display = 'none';
   document.getElementById('quiz-footer').style.display = 'none';
-  document.getElementById('quiz-timer').style.display = 'none';
 
   // Calculate results
   const total = quizState.questions.length;
@@ -1369,49 +1310,28 @@ function endQuiz(completed) {
   let message = '';
   let messageBg = '';
 
-  if (quizState.mode === 'exam') {
-    if (quizState.wrongCount <= 3) {
-      emoji = '🏆';
-      message = 'Превосходно! Вы готовы к экзамену!';
-      messageBg = 'var(--emerald-light)';
-    } else if (quizState.wrongCount <= 5) {
-      emoji = '👏';
-      message = 'Хороший результат! Ещё немного практики.';
-      messageBg = 'var(--amber-light)';
-    } else {
-      emoji = '📚';
-      message = 'Нужно повторить материал. Не сдавайтесь!';
-      messageBg = 'var(--red-light)';
-    }
+  if (pct >= 90) {
+    emoji = '🏆';
+    message = 'Отличный результат!';
+    messageBg = 'var(--emerald-light)';
+  } else if (pct >= 70) {
+    emoji = '👍';
+    message = 'Хорошо! Но есть над чем поработать.';
+    messageBg = 'var(--amber-light)';
   } else {
-    if (pct >= 90) {
-      emoji = '🏆';
-      message = 'Отличный результат!';
-      messageBg = 'var(--emerald-light)';
-    } else if (pct >= 70) {
-      emoji = '👍';
-      message = 'Хорошо! Но есть над чем поработать.';
-      messageBg = 'var(--amber-light)';
-    } else {
-      emoji = '📖';
-      message = 'Стоит повторить материал.';
-      messageBg = 'var(--red-light)';
-    }
+    emoji = '📖';
+    message = 'Стоит повторить материал.';
+    messageBg = 'var(--red-light)';
   }
 
   document.getElementById('result-emoji').textContent = emoji;
-  document.getElementById('result-title').textContent = completed ? 'Результат' : 'Экзамен не пройден';
+  document.getElementById('result-title').textContent = completed ? 'Результат' : 'Тест прерван';
   const msgEl = document.getElementById('result-message');
   msgEl.textContent = message;
   msgEl.style.background = messageBg;
 }
 
 function exitQuiz() {
-  if (timerInterval) {
-    clearInterval(timerInterval);
-    timerInterval = null;
-  }
-
   document.getElementById('quiz-screen').classList.remove('active');
   quizState = null;
   updateUI();
@@ -1423,8 +1343,8 @@ function retryQuiz() {
     const catId = quizState.categoryId;
     exitQuiz();
     setTimeout(() => {
-      if (mode === 'exam') {
-        startExam();
+      if (mode === 'all') {
+        startAllQuestions();
       } else if (mode === 'topic' && catId) {
         startQuiz('topic', catId);
       } else if (mode === 'errors') {
@@ -1433,40 +1353,6 @@ function retryQuiz() {
         startQuiz('random');
       }
     }, 100);
-  }
-}
-
-// ============================================
-// EXAM TIMER
-// ============================================
-function startExamTimer() {
-  updateTimerDisplay();
-
-  timerInterval = setInterval(() => {
-    quizState.timeRemaining--;
-
-    if (quizState.timeRemaining <= 0) {
-      clearInterval(timerInterval);
-      timerInterval = null;
-      endQuiz(true);
-      return;
-    }
-
-    updateTimerDisplay();
-  }, 1000);
-}
-
-function updateTimerDisplay() {
-  const minutes = Math.floor(quizState.timeRemaining / 60);
-  const seconds = quizState.timeRemaining % 60;
-  const display = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-  document.getElementById('timer-display').textContent = display;
-
-  const timerEl = document.getElementById('quiz-timer');
-  if (quizState.timeRemaining <= 300) {
-    timerEl.classList.add('urgent');
-  } else {
-    timerEl.classList.remove('urgent');
   }
 }
 
@@ -2761,32 +2647,6 @@ function closePaymentModal() {
 }
 
 // Telegram Payments — requires TELEGRAM_PAYMENTS_PROVIDER_TOKEN on server
-async function buyProExamWithStars() {
-  try {
-    const data = await apiPost('/api/create-invoice', {
-      item: 'pro_exam',
-      amount: 25,
-    });
-    if (data.invoice_url) {
-      Telegram.WebApp.openInvoice(data.invoice_url, (status) => {
-        if (status === 'paid') {
-          alert('Payment successful!');
-          closePaymentModal();
-          startExam();
-        }
-      });
-    } else {
-      alert('Payments not configured yet. Coming soon!');
-    }
-  } catch (e) {
-    alert('Payments not configured yet. Coming soon!');
-  }
-}
-
-function buyProExam() {
-  buyProExamWithStars();
-}
-
 function buyLives() {
   if (window.Telegram?.WebApp?.openInvoice) {
     const tg = window.Telegram.WebApp;
@@ -3044,8 +2904,6 @@ function renderSettingsForm(settings) {
     'free_error_limit': '📝 Лимит ошибок (бесплатный план)',
     'max_daily_lives': '❤️ Жизни в день',
     'daily_questions_target': '🎯 Цель вопросов в день',
-    'exam_questions': '📋 Вопросов в экзамене',
-    'exam_time_minutes': '⏱️ Время экзамена (мин)',
     'mini_game_duration': '🎮 Длительность мини-игры (сек)',
     'pro_duration_days': '📅 Срок Pro подписки (дней)',
     'free_plan_enabled': '🆓 Бесплатный план',
@@ -3064,11 +2922,13 @@ function renderSettingsForm(settings) {
   };
 
   const boolKeys = ['free_plan_enabled', 'pro_plan_enabled', 'discount_enabled'];
+  // Settings that belonged to the removed exam mode.
+  const retiredKeys = ['exam_questions', 'exam_time_minutes'];
 
-  container.innerHTML = settings.map(s => {
+  container.innerHTML = settings.filter(s => !retiredKeys.includes(s.key)).map(s => {
     const label = settingLabels[s.key] || s.key;
     const isBool = boolKeys.includes(s.key);
-    const isNumber = ['pro_stars_price', 'pro_duration_days', 'free_error_limit', 'max_daily_lives', 'daily_questions_target', 'exam_questions', 'exam_time_minutes', 'mini_game_duration', 'lives_stars_price', 'discount_percent', 'discount_price', 'free_bird_games', 'bird_obstacles_min', 'bird_obstacles_max', 'bird_question_seconds', 'bird_ad_reward_max', 'bird_ad_duration'].includes(s.key);
+    const isNumber = ['pro_stars_price', 'pro_duration_days', 'free_error_limit', 'max_daily_lives', 'daily_questions_target', 'mini_game_duration', 'lives_stars_price', 'discount_percent', 'discount_price', 'free_bird_games', 'bird_obstacles_min', 'bird_obstacles_max', 'bird_question_seconds', 'bird_ad_reward_max', 'bird_ad_duration'].includes(s.key);
 
     if (isBool) {
       return `

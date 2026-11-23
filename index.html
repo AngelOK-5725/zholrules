@@ -98,10 +98,10 @@
 
       <!-- Quick Actions -->
       <div class="quick-actions">
-        <button class="quick-action" onclick="startExam()">
-          <span class="quick-action-icon">📝</span>
-          <span class="quick-action-title">Экзамен</span>
-          <span class="quick-action-desc">40 вопросов</span>
+        <button class="quick-action" onclick="startAllQuestions()">
+          <span class="quick-action-icon">🎲</span>
+          <span class="quick-action-title">Рандом</span>
+          <span class="quick-action-desc">Все вопросы</span>
         </button>
         <button class="quick-action" onclick="switchTab('study')">
           <span class="quick-action-icon">🚦</span>
@@ -167,10 +167,10 @@
           <div class="mode-title">Случайный микс</div>
           <div class="mode-desc">20 вопросов</div>
         </div>
-        <div class="mode-card" onclick="startExam()">
-          <div class="mode-icon">🏛️</div>
-          <div class="mode-title">Как в СпецЦОНе</div>
-          <div class="mode-desc">40 вопросов, 40 мин</div>
+        <div class="mode-card" onclick="startAllQuestions()">
+          <div class="mode-icon">🎲</div>
+          <div class="mode-title">Рандом по всем</div>
+          <div class="mode-desc">Все вопросы системы</div>
         </div>
         <div class="mode-card" onclick="startQuiz('errors')">
           <div class="mode-icon">📝</div>
@@ -677,11 +677,6 @@
       <span class="quiz-counter" id="quiz-counter">1 / 20</span>
     </div>
 
-    <div class="quiz-timer" id="quiz-timer" style="display:none;">
-      <span class="timer-icon">⏱️</span>
-      <span id="timer-display">40:00</span>
-    </div>
-
     <div class="quiz-content">
       <div class="quiz-question" id="quiz-question">
         <div class="quiz-question-text" id="quiz-question-text"></div>
@@ -813,12 +808,6 @@
         <button class="modal-close" onclick="closePaymentModal()">✕</button>
       </div>
       <div class="payment-options">
-        <div class="payment-card" onclick="buyProExam()">
-          <div class="payment-icon">🏛️</div>
-          <div class="payment-title">СпецЦОН Симулятор PRO</div>
-          <div class="payment-price">25 Stars</div>
-          <div class="payment-desc">Полная симуляция экзамена</div>
-        </div>
         <div class="payment-card" onclick="buyLives()">
           <div class="payment-icon">❤️</div>
           <div class="payment-title">+3 Жизни</div>
