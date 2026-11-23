@@ -3438,6 +3438,17 @@ const BIRD = {
 const BIRD_PIPE_W = 58;
 const BIRD_BIRD_X = 0.3;
 const BIRD_MAX_LIVES = 3;
+// Every N answered questions the world speeds up. The player is not told: it
+// should feel like the game naturally gets harder, not like a counter.
+const BIRD_QUESTIONS_PER_SPEEDUP = 5;
+const BIRD_SPEED_STEP = 0.1;
+const BIRD_MAX_SPEED_LEVEL = 8;
+const BIRD_BASE_SPEED = 130;
+
+function birdScrollSpeed(st) {
+  const level = Math.min(BIRD_MAX_SPEED_LEVEL, Math.max(0, st?.speedLevel || 0));
+  return BIRD_BASE_SPEED * (1 + level * BIRD_SPEED_STEP);
+}
 
 function birdRand(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -3632,6 +3643,7 @@ function birdBegin() {
     roundPassed: 0,
     passedTotal: 0,
     correct: 0,
+    speedLevel: 0,
     target: birdTarget(),
     pipes: [],
     usedQuestions: new Set(),
@@ -3688,7 +3700,8 @@ function birdUpdate(dt) {
   }
 
   const spacing = Math.max(205, BIRD.W * 0.6);
-  st.pipes.forEach(p => { p.x -= 130 * dt; });
+  const scroll = birdScrollSpeed(st);
+  st.pipes.forEach(p => { p.x -= scroll * dt; });
 
   const last = st.pipes[st.pipes.length - 1];
   if (!last || last.x < BIRD.W - spacing) {
@@ -3909,6 +3922,10 @@ function resolveBirdAnswer(index) {
   if (isCorrect) {
     st.correct += 1;
     st.score += 100;
+    // Speed up the world after every N answered questions.
+    if (st.correct % BIRD_QUESTIONS_PER_SPEEDUP === 0) {
+      st.speedLevel = Math.min(BIRD_MAX_SPEED_LEVEL, (st.speedLevel || 0) + 1);
+    }
     feedback.textContent = `✅ Верно! +100 очков${q.explanation ? ` — ${q.explanation}` : ''}`;
     feedback.className = 'bird-q-feedback is-correct';
     birdHaptic('success');
