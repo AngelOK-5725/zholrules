@@ -3442,12 +3442,14 @@ const BIRD_MAX_LIVES = 3;
 // should feel like the game naturally gets harder, not like a counter.
 const BIRD_QUESTIONS_PER_SPEEDUP = 5;
 const BIRD_SPEED_STEP = 0.1;
-const BIRD_MAX_SPEED_LEVEL = 8;
+// Ceiling tuned by flying the autopilot through it: +60% speed with a 136 px
+// corridor still clears pipes, while +80% / 126 px was not flyable at all.
+const BIRD_MAX_SPEED_LEVEL = 6;
 const BIRD_BASE_SPEED = 130;
 // Each speed-up also narrows the pipe corridor a little, down to a floor that
-// still leaves room to fly through.
-const BIRD_GAP_SHRINK = 8;
-const BIRD_MIN_GAP = 110;
+// still leaves room to fly through on short screens.
+const BIRD_GAP_SHRINK = 5;
+const BIRD_MIN_GAP = 130;
 
 function birdSpeedLevel(st) {
   return Math.min(BIRD_MAX_SPEED_LEVEL, Math.max(0, st?.speedLevel || 0));
