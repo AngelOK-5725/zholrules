@@ -3444,10 +3444,22 @@ const BIRD_QUESTIONS_PER_SPEEDUP = 5;
 const BIRD_SPEED_STEP = 0.1;
 const BIRD_MAX_SPEED_LEVEL = 8;
 const BIRD_BASE_SPEED = 130;
+// Each speed-up also narrows the pipe corridor a little, down to a floor that
+// still leaves room to fly through.
+const BIRD_GAP_SHRINK = 8;
+const BIRD_MIN_GAP = 110;
+
+function birdSpeedLevel(st) {
+  return Math.min(BIRD_MAX_SPEED_LEVEL, Math.max(0, st?.speedLevel || 0));
+}
 
 function birdScrollSpeed(st) {
-  const level = Math.min(BIRD_MAX_SPEED_LEVEL, Math.max(0, st?.speedLevel || 0));
-  return BIRD_BASE_SPEED * (1 + level * BIRD_SPEED_STEP);
+  return BIRD_BASE_SPEED * (1 + birdSpeedLevel(st) * BIRD_SPEED_STEP);
+}
+
+function birdGapH(st) {
+  const base = Math.max(152, BIRD.H * 0.32);
+  return Math.max(BIRD_MIN_GAP, base - birdSpeedLevel(st) * BIRD_GAP_SHRINK);
 }
 
 function birdRand(min, max) {
@@ -3705,7 +3717,7 @@ function birdUpdate(dt) {
 
   const last = st.pipes[st.pipes.length - 1];
   if (!last || last.x < BIRD.W - spacing) {
-    const gap = Math.max(152, BIRD.H * 0.32);
+    const gap = birdGapH(st);
     const gapY = birdRand(64, Math.max(76, Math.round(groundY - gap - 64)));
     st.pipes.push({ x: BIRD.W + 24, gapY, gapH: gap, passed: false });
   }
